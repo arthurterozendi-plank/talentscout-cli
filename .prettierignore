@@ -1,0 +1,4 @@
+# pnpm writes this on every install; Prettier does not ignore it by default
+# (unlike node_modules, which it does), so `prettier --check .` fails on it
+# unless it is listed here. This is the file's only job in this repo.
+pnpm-lock.yaml

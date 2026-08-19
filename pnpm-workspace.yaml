@@ -1,0 +1,8 @@
+# This repo declares no workspaces — it is a single package. The file still has
+# to exist because pnpm 11 reads `allowBuilds` only from here, not from
+# `package.json`'s "pnpm" field (that field is silently ignored on pnpm 11).
+# Without this, `esbuild`'s postinstall script is an unapproved build and pnpm
+# aborts every `pnpm <script>` with ERR_PNPM_IGNORED_BUILDS before running
+# anything — esbuild is a transitive dependency of tsx.
+allowBuilds:
+  esbuild: true
