@@ -11,9 +11,9 @@ function characters(params: Anthropic.MessageCreateParamsNonStreaming): number {
 
 /**
  * A client that answers every request at once with a made-up score, shaped
- * like a real reply that hit the stop sequence. It lets `--dry-run` drive the
- * whole pipeline — grid, requests, parsing, cost, table — with no key and no
- * spend. Its usage is a rough four-characters-per-token guess so the cost
+ * like a real reply that hit the stop sequence. Every run without `--live`
+ * uses it, so the whole pipeline — grid, requests, parsing, cost, table — runs
+ * with no key and no spend. Its usage is a rough four-characters-per-token guess so the cost
  * column has something to show; nothing it returns is a measurement.
  */
 export function createDryRunClient(random: () => number): MessagesClient {

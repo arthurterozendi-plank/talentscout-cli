@@ -86,9 +86,13 @@ exits `1` if any turn failed or was refused, and `0` only if every turn complete
 ## Benchmark
 
 ```bash
-pnpm benchmark --dry-run   # no key, no spend: proves the pipeline, prints the cost ceiling
-pnpm benchmark             # the live run: 243 requests; see the write-up for where results go
+pnpm benchmark          # dry run: no key, no spend; proves the pipeline, prints the cost ceiling
+pnpm benchmark --live   # the paid run: 243 requests; see the write-up for where results go
 ```
+
+**Only `--live` sends requests.** A plain `pnpm benchmark` is a dry run against a fake client even
+when `ANTHROPIC_API_KEY` is set, because a key exported for other tools must not turn a plain run
+into spend.
 
 The resume-scoring benchmark (AI-52) runs one task the product needs — scoring a resume against a
 job description — with zero-shot, few-shot and chain-of-thought prompts on six models, each

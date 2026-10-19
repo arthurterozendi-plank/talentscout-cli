@@ -60,7 +60,7 @@ modules; `benchmarks/resume-scoring/README.md` is its write-up and `results/` be
 | `grid.ts`     | Which models run at which temperatures, expanded into every cell.                |
 | `run.ts`      | One request: building it, sending it with retries, recording its outcome.        |
 | `report.ts`   | The comparison table, the report around it, and the cost ceiling.                |
-| `dry-run.ts`  | The fake client `--dry-run` uses.                                                |
+| `dry-run.ts`  | The fake client every run without `--live` uses.                                 |
 
 **`@/*` maps to `src/*`.** An import that crosses a directory uses it — `@/models.js` from
 `src/benchmark/` — and one within a directory stays relative. `tsconfig.json`'s `paths` declares
@@ -170,6 +170,10 @@ The observable contract `run()` implements:
   and it runs once per question, so it has no business in `cli.ts`'s contract. It reuses the CLI's
   request shape (`buildMessageParams`), temperature rule (`checkTemperatureSupport`), retries and
   error text, so a request it sends is one the CLI would send.
+- **The benchmark is a dry run unless `--live` is passed.** A plain `pnpm benchmark` never builds
+  a real client, even with `ANTHROPIC_API_KEY` set: a key exported for other tools must not turn a
+  plain run into spend. `--live` is the only way to make paid calls; there is no `--dry-run` flag,
+  since the dry run is what the command does by default.
 
 ## Verification
 

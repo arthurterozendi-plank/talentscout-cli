@@ -45,15 +45,17 @@ const MAX_REPS = 10;
 // mangle ordinary words while protecting nothing.
 const MIN_MASKED_KEY_LENGTH = 20;
 
-const USAGE = `Usage: pnpm benchmark [--dry-run] [--reps <n>] [--out <dir>]
+const USAGE = `Usage: pnpm benchmark [--live] [--reps <n>] [--out <dir>]
 
 Scores resumes against job descriptions with every prompting technique, model
 and temperature in the grid, each configuration several times, and prints one
 comparison table with every configuration's scores, latency and cost.
 
+Without --live this is a dry run: a fake client answers with made-up replies,
+so no API key is read, no request is sent and no file is written.
+
 Options:
-  --dry-run      Use a fake client: no API key, no requests, no files. The
-                 table is printed with made-up replies.
+  --live         Send the requests to the API. This costs money.
   --reps <n>     Runs of each configuration, ${MIN_REPS} to ${MAX_REPS} (default ${DEFAULT_REPS}).
   --out <dir>    Where a live run writes its results
                  (default ${DEFAULT_OUT_DIR}).
@@ -69,7 +71,7 @@ function parse(argv: string[]) {
     args: argv,
     options: {
       help: { type: "boolean", short: "h" },
-      "dry-run": { type: "boolean" },
+      live: { type: "boolean" },
       reps: { type: "string" },
       out: { type: "string" },
     },
@@ -94,9 +96,11 @@ function progress(record: RunRecord): string {
 /**
  * Runs the benchmark from raw argv and resolves to its exit code: `0` once
  * every request has been made (malformed replies and failed requests are
- * results, recorded in the table), `1` for bad flags, a missing key, or a run
- * stopped by a rejected key. The table goes to stdout; the plan, progress and
- * errors to stderr.
+ * results, recorded in the table), `1` for bad flags, `--live` without a key,
+ * or a run stopped by a rejected key. Only `--live` sends requests or writes
+ * files; without it the run is a dry run against a fake client, whatever the
+ * environment holds. The table goes to stdout; the plan, progress and errors
+ * to stderr.
  */
 export async function runBenchmark(argv: string[], deps: BenchmarkDeps): Promise<number> {
   const apiKey = deps.env["ANTHROPIC_API_KEY"]?.trim() ? deps.env["ANTHROPIC_API_KEY"] : undefined;
@@ -132,11 +136,14 @@ export async function runBenchmark(argv: string[], deps: BenchmarkDeps): Promise
     return 1;
   }
 
-  const dryRun = values["dry-run"] === true;
-  if (!dryRun && apiKey === undefined) {
+  // A key exported for other tools must not turn a plain run into spend, so
+  // only --live ever builds a real client.
+  const live = values.live === true;
+  const dryRun = !live;
+  if (live && apiKey === undefined) {
     stderr(
       "ANTHROPIC_API_KEY is not set, so no request can be sent. Export your Anthropic API key " +
-        "in it and run again, or pass --dry-run to exercise the benchmark without one.",
+        "in it and run again, or leave out --live for a dry run.",
     );
     return 1;
   }
@@ -145,14 +152,14 @@ export async function runBenchmark(argv: string[], deps: BenchmarkDeps): Promise
   const requests = planRequests(cells, reps);
   const startedAt = deps.date();
   stderr(
-    `${dryRun ? "dry run — a live run would send" : "sending"} ${requests.length} requests ` +
-      `(${cells.length} configurations × ${reps} reps). It cannot cost more than ` +
+    `${live ? "sending" : "dry run — pass --live to send"} ${requests.length} requests ` +
+      `(${cells.length} configurations × ${reps} reps). A live run cannot cost more than ` +
       `$${costCeilingUsd(requests).toFixed(2)}, the figure if every reply ran to max_tokens; ` +
       "expect a small fraction of that.",
   );
 
   const client =
-    apiKey === undefined || dryRun ? createDryRunClient(deps.random) : deps.createClient(apiKey);
+    live && apiKey !== undefined ? deps.createClient(apiKey) : createDryRunClient(deps.random);
   const stamp = startedAt.toISOString().replaceAll(/[:.]/g, "-");
   const outDir = values.out ?? DEFAULT_OUT_DIR;
   const recordsPath = join(outDir, `${stamp}.jsonl`);
