@@ -20,10 +20,12 @@ export interface ConfigFlags {
 export type ConfigResult = { ok: true; config: ChatConfig } | { ok: false; error: string };
 
 /**
- * A ceiling, not a target: only generated tokens are billed. It leaves room
- * for the thinking that later models always do, which counts against it.
+ * A ceiling, not a target: only generated tokens are billed. Requests stream,
+ * so the SDK's size limit on non-streaming requests no longer applies; this
+ * leaves room for the thinking later models always do, which counts against
+ * it, while still capping what a runaway reply can cost.
  */
-export const MAX_TOKENS = 16_000;
+export const MAX_TOKENS = 32_000;
 
 /** Retries after the first attempt when `--max-retries` is not given. */
 export const DEFAULT_MAX_RETRIES = 4;

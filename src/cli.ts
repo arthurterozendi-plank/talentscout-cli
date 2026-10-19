@@ -96,6 +96,11 @@ function report(outcome: TurnOutcome, session: Session, stderr: (text: string) =
   }
 }
 
+/**
+ * Reads and sends lines until input ends. Exits `1` if any turn went
+ * unanswered — failed or refused — so `cat prompts.txt | talentscout-cli` can
+ * tell that some input got no usable reply; `0` only when every turn completed.
+ */
 async function converse(
   session: Session,
   io: TurnIo,
@@ -103,13 +108,14 @@ async function converse(
   stderr: (text: string) => void,
 ): Promise<number> {
   stderr("Type a message and press Enter. Ctrl-D or Ctrl-C ends the conversation.");
+  let unanswered = false;
   for (;;) {
     const line = await readLine(PROMPT);
     if (io.signal.aborted) {
       return EXIT_INTERRUPTED;
     }
     if (line === undefined) {
-      return 0;
+      return unanswered ? 1 : 0;
     }
     const outcome = await handleInput(session, line, io);
     if (outcome === undefined) {
@@ -120,6 +126,7 @@ async function converse(
       return EXIT_INTERRUPTED;
     }
     if (!isKept(outcome)) {
+      unanswered = true;
       stderr("That message was left out of the conversation; send it again to retry.");
     }
   }

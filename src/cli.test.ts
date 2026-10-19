@@ -168,7 +168,7 @@ describe("model and temperature", () => {
       {
         model: "claude-haiku-4-5",
         temperature: 0,
-        max_tokens: 16_000,
+        max_tokens: 32_000,
         messages: [{ role: "user", content: "Suggest an interview question" }],
       },
     ]);
@@ -339,7 +339,7 @@ describe("the API key", () => {
 
     await run(["--model", "claude-haiku-4-5", "Hello"], cli.deps);
 
-    expect(cli.stderr()).toContain("max_tokens=16000 max_retries=4");
+    expect(cli.stderr()).toContain("max_tokens=32000 max_retries=4");
   });
 
   it("never appears in output, even when an error message repeats it", async () => {
@@ -376,7 +376,7 @@ describe("how the reply ended", () => {
 
     await expect(run(["--model", "claude-opus-5-5", "Hello"], cli.deps)).resolves.toBe(0);
     expect(cli.stdout()).toBe("A very long\n");
-    expect(cli.stderr()).toContain("cut off at max_tokens=16000");
+    expect(cli.stderr()).toContain("cut off at max_tokens=32000");
   });
 });
 
@@ -435,16 +435,36 @@ describe("a conversation, started by giving no prompt", () => {
     ]);
   });
 
-  it("explains a failed turn, says it was left out, and carries on", async () => {
+  it("explains a failed turn, says it was left out, carries on, and exits 1 at the end", async () => {
     const cli = harness([apiError(400, "invalid_request_error", "bad"), reply("Hi")], {
+      lines: ["First", "Second"],
+    });
+
+    await expect(run([], cli.deps)).resolves.toBe(1);
+
+    expect(cli.stderr()).toContain("rejected the request (400): bad");
+    expect(cli.stderr()).toContain("left out of the conversation");
+    expect(cli.requests[1]?.messages).toEqual([{ role: "user", content: "Second" }]);
+    expect(cli.stdout()).toBe("Hi\n");
+  });
+
+  it("exits 1 at the end when a turn was refused, though later turns completed", async () => {
+    const cli = harness([reply("", "refusal"), reply("Hi")], { lines: ["First", "Second"] });
+
+    await expect(run([], cli.deps)).resolves.toBe(1);
+
+    expect(cli.stderr()).toContain("declined to answer");
+    expect(cli.requests).toHaveLength(2);
+  });
+
+  it("exits 0 at the end only when every turn completed, a cut-off reply included", async () => {
+    const cli = harness([reply("Hi"), reply("A very long", "max_tokens")], {
       lines: ["First", "Second"],
     });
 
     await expect(run([], cli.deps)).resolves.toBe(0);
 
-    expect(cli.stderr()).toContain("rejected the request (400): bad");
-    expect(cli.stderr()).toContain("left out of the conversation");
-    expect(cli.requests[1]?.messages).toEqual([{ role: "user", content: "Second" }]);
+    expect(cli.requests).toHaveLength(2);
   });
 
   it("ends with exit 130 on Ctrl-C at the prompt", async () => {

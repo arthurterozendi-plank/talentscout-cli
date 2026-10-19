@@ -52,6 +52,12 @@ compare temperatures, name one of them, e.g. `--model claude-haiku-4-5 --tempera
 balanced model for everyday work, at half Claude Opus 5.5's per-token price. Like every current
 model it takes no temperature, so `--temperature` on its own is rejected too.
 
+**Every request allows up to 32,000 output tokens.** Only the tokens a reply actually uses are
+billed. Because replies stream, the SDK's size limit on non-streaming requests no longer applies;
+32,000 leaves room for the thinking current models do before answering, which counts against the
+limit, while still capping what a runaway reply can cost. A reply that hits it is printed with a
+warning that it was cut off.
+
 ### Retries, failures and Ctrl-C
 
 Retries back off exponentially from 0.5 s to 8 s with jitter, and wait at least as long as the
@@ -72,7 +78,9 @@ interrupt. A partial reply is ended with a line break, so nothing is left half-w
 
 `--help`/`-h` prints usage and exits `0`. For a prompt given as arguments, any failure — a bad
 flag, a missing key, a rejected request, exhausted retries, a refusal — is explained on stderr and
-exits `1`. A conversation explains a failed turn and carries on, and exits `0` when input ends.
+exits `1`. A conversation explains a failed or refused turn and carries on; when input ends it
+exits `1` if any turn failed or was refused, and `0` only if every turn completed, so
+`cat prompts.txt | pnpm -s cli` can tell that some input got no usable answer.
 
 ## Check
 

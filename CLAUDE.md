@@ -88,7 +88,8 @@ The observable contract `run()` implements:
   costs a request.
 - Any failure: an explanation on stderr, exit `1`. An unrecognised flag also prints usage. In a
   conversation a failed or refused turn is explained, said to be left out, and the conversation
-  goes on; it exits `0` when input ends (Ctrl-D, or the end of piped input).
+  goes on; when input ends (Ctrl-D, or the end of piped input) it exits `1` if any turn failed or
+  was refused, and `0` only if every turn completed.
 - Ctrl-C, mid-reply or at the prompt: any partial line is ended, exit `130`.
 - Never a stack trace. `run()` turns every SDK error into a sentence (`errors.ts`); `main.ts`
   catches anything else with a generic message.
@@ -130,8 +131,14 @@ The observable contract `run()` implements:
   set the API rejects the request. Output is masked against the key as a backstop, since error
   text comes from the server. A streamed reply is masked one piece at a time, so a key split across
   two pieces would get through; error text, which the backstop is for, arrives whole.
-- **`max_tokens` is 16,000 for every model.** It is a ceiling, not a target — only generated
-  tokens are billed — and it leaves room for the thinking later models always do.
+- **A conversation exits `1` if any of its turns failed or was refused.** It carries on past such
+  a turn, so the exit code is the only signal a script gets: `cat prompts.txt | talentscout-cli`
+  must be able to tell that some input got no usable answer. A reply cut off at `max_tokens` still
+  counts as completed, as it does for a one-shot prompt.
+- **`max_tokens` is 32,000 for every model.** It is a ceiling, not a target — only generated
+  tokens are billed. Requests stream, so the SDK's size limit on non-streaming requests no longer
+  applies; 32,000 leaves room for the thinking later models always do, which counts against it,
+  while still capping what a runaway reply can cost.
 
 ## Verification
 
