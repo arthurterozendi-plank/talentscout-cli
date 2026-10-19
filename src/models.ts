@@ -170,37 +170,62 @@ export type TokenUsage = Pick<
   | "cache_creation"
 >;
 
+/** A response's token counts, one per rate they are billed at; see {@link TokenPrices}. */
+export type TokenCounts = { readonly [K in keyof TokenPrices]: number };
+
+/**
+ * Reads `usage` into one count per rate. Cache writes are taken from the TTL
+ * breakdown when the API gives one; a total without a breakdown counts as
+ * 5-minute writes, the default TTL. A counter the API left null counts as 0.
+ */
+export function countTokens(usage: TokenUsage): TokenCounts {
+  const breakdown = usage.cache_creation;
+  return {
+    input: usage.input_tokens,
+    output: usage.output_tokens,
+    cacheRead: usage.cache_read_input_tokens ?? 0,
+    cacheWrite5m: breakdown
+      ? breakdown.ephemeral_5m_input_tokens
+      : (usage.cache_creation_input_tokens ?? 0),
+    cacheWrite1h: breakdown ? breakdown.ephemeral_1h_input_tokens : 0,
+  };
+}
+
 /**
  * What one response cost in USD, computed from the `usage` the API returned
- * and the model's {@link ModelInfo.pricing}. Each kind of token is priced at
- * its own rate: uncached input, cache reads, 5-minute and 1-hour cache writes,
- * and output (which includes any thinking).
+ * and the model's {@link ModelInfo.pricing}. Each kind of token
+ * {@link countTokens} reads is priced at its own rate: uncached input, cache
+ * reads, 5-minute and 1-hour cache writes, and output (which includes any
+ * thinking).
  *
- * Cache writes are taken from the TTL breakdown when the API gives one; a
- * total without a breakdown is priced at the 5-minute rate, the default TTL.
  * A model with a `longPrompt` rate card is priced on it when the whole prompt
  * — uncached, read and written tokens together — is longer than its
- * threshold. Only the standard tier is priced: batch, fast mode and US-only
- * inference are billed at other rates this does not model.
+ * threshold, so a cost is computed per response and only then summed. Only
+ * the standard tier is priced: batch, fast mode and US-only inference are
+ * billed at other rates this does not model.
  */
 export function costUsd(model: ModelInfo, usage: TokenUsage): number {
-  const cacheRead = usage.cache_read_input_tokens ?? 0;
-  const breakdown = usage.cache_creation;
-  const cacheWrite5m = breakdown
-    ? breakdown.ephemeral_5m_input_tokens
-    : (usage.cache_creation_input_tokens ?? 0);
-  const cacheWrite1h = breakdown ? breakdown.ephemeral_1h_input_tokens : 0;
-  const promptTokens = usage.input_tokens + cacheRead + cacheWrite5m + cacheWrite1h;
+  const tokens = countTokens(usage);
+  const promptTokens = tokens.input + tokens.cacheRead + tokens.cacheWrite5m + tokens.cacheWrite1h;
 
   const { longPrompt } = model.pricing;
   const prices =
     longPrompt !== undefined && promptTokens > longPrompt.aboveTokens ? longPrompt : model.pricing;
 
   const perMillion =
-    usage.input_tokens * prices.input +
-    usage.output_tokens * prices.output +
-    cacheRead * prices.cacheRead +
-    cacheWrite5m * prices.cacheWrite5m +
-    cacheWrite1h * prices.cacheWrite1h;
+    tokens.input * prices.input +
+    tokens.output * prices.output +
+    tokens.cacheRead * prices.cacheRead +
+    tokens.cacheWrite5m * prices.cacheWrite5m +
+    tokens.cacheWrite1h * prices.cacheWrite1h;
   return perMillion / 1_000_000;
+}
+
+/**
+ * A cost in USD to five decimal places, enough to tell apart the fractions of
+ * a cent a short reply from Claude Haiku 5.5 costs. A cost that rounds to
+ * nothing but is not zero is shown as `<$0.00001` rather than as free.
+ */
+export function formatUsd(value: number): string {
+  return value > 0 && value < 0.00001 ? "<$0.00001" : `$${value.toFixed(5)}`;
 }

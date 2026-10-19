@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   costUsd,
+  countTokens,
   DEFAULT_MODEL_ID,
   findModel,
+  formatUsd,
   MODEL_ALIASES,
   MODELS,
   type ModelInfo,
@@ -152,5 +154,32 @@ describe("costUsd", () => {
 
     // $0.50 input, $2.50 output, $0.05 cache read per million on the long-prompt card.
     expect(cost).toBeCloseTo(0.0005 + 2.5 + 0.005, 10);
+  });
+});
+
+describe("countTokens", () => {
+  it("reads one count per rate, splitting cache writes by TTL and treating null as zero", () => {
+    expect(
+      countTokens(
+        usage({
+          input_tokens: 100,
+          output_tokens: 20,
+          cache_creation_input_tokens: 3_000,
+          cache_creation: { ephemeral_5m_input_tokens: 2_000, ephemeral_1h_input_tokens: 1_000 },
+        }),
+      ),
+    ).toEqual({ input: 100, output: 20, cacheRead: 0, cacheWrite5m: 2_000, cacheWrite1h: 1_000 });
+  });
+});
+
+describe("formatUsd", () => {
+  it("shows five decimal places, so a fraction of a cent is still visible", () => {
+    expect(formatUsd(0.0019)).toBe("$0.00190");
+    expect(formatUsd(12.5)).toBe("$12.50000");
+    expect(formatUsd(0)).toBe("$0.00000");
+  });
+
+  it("never shows a cost that rounds to nothing as free", () => {
+    expect(formatUsd(0.0000035)).toBe("<$0.00001");
   });
 });

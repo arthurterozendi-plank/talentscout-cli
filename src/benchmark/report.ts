@@ -1,5 +1,5 @@
 import { MAX_TOKENS } from "@/config.js";
-import { costUsd } from "@/models.js";
+import { costUsd, formatUsd } from "@/models.js";
 import { cellLabel, type BenchmarkCell } from "./grid.js";
 import { STOP_SEQUENCE } from "./prompts.js";
 import { buildRequest, type PlannedRequest, type RunRecord } from "./run.js";
@@ -20,11 +20,6 @@ const mean = (values: readonly number[]) =>
 const seconds = (ms: number) => (ms / 1000).toFixed(1);
 
 const integer = (value: number) => Math.round(value).toLocaleString("en-US");
-
-// Five decimals, because a claude-haiku-5-5 run costs a few thousandths of a cent.
-function usd(value: number): string {
-  return value > 0 && value < 0.00001 ? "<$0.00001" : `$${value.toFixed(5)}`;
-}
 
 /** The table's columns, and how one cell's records fill each of them. */
 const COLUMNS: ReadonlyArray<{
@@ -94,7 +89,7 @@ const COLUMNS: ReadonlyArray<{
     header: "Cost per run, mean",
     value: (_, records) => {
       const costs = records.flatMap((record) => record.costUsd ?? []);
-      return costs.length === 0 ? "—" : usd(mean(costs));
+      return costs.length === 0 ? "—" : formatUsd(mean(costs));
     },
   },
 ];
@@ -169,7 +164,7 @@ export function renderReport(
     `- Repetitions per cell: ${meta.reps}`,
     `- Requests: ${records.length} sent, ${records.length - failures.length} scored, ` +
       `${failures.length} failed${byOutcome.length === 0 ? "" : ` (${byOutcome.join(", ")})`}`,
-    `- Total cost: ${usd(totalCost)}, summed from each reply's usage`,
+    `- Total cost: ${formatUsd(totalCost)}, summed from each reply's usage`,
     `- Every request: max_tokens ${MAX_TOKENS}, stop sequence \`${STOP_SEQUENCE}\`, no prompt caching, ` +
       "thinking and effort left at each model's default",
     '- Temp "default": no temperature sent; these models reject any value but their default',
