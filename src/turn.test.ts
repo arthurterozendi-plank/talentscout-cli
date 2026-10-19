@@ -15,11 +15,18 @@ import {
   textStart,
   type ScriptedReply,
 } from "./fake-client.js";
+import { findModel, type ModelInfo } from "./models.js";
 import { RetriesExhaustedError } from "./retry.js";
 import { streamTurn, type TurnIo } from "./turn.js";
 
+function model(id: string): ModelInfo {
+  const found = findModel(id);
+  if (found === undefined) throw new Error(`unknown model ${id}`);
+  return found;
+}
+
 const config: ChatConfig = {
-  model: { id: "claude-haiku-4-5", acceptsTemperature: true },
+  model: model("claude-haiku-4-5"),
   temperature: undefined,
   maxTokens: 16_000,
   maxRetries: 2,

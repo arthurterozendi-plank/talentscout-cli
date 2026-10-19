@@ -1,9 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { buildMessageParams, responseText, type MessagesClient } from "@/client.js";
+import { buildMessageParams, type MessagesClient, type ReplyStream } from "@/client.js";
 import { DEFAULT_MAX_RETRIES, MAX_TOKENS, type ChatConfig } from "@/config.js";
 import { describeFailure } from "@/errors.js";
 import { costUsd } from "@/models.js";
 import { withRetry, type RetryEvent } from "@/retry.js";
+import { withDelta } from "@/turn.js";
 import { cellLabel, type BenchmarkCell } from "./grid.js";
 import { buildPrompt, parseScore, STOP_SEQUENCE } from "./prompts.js";
 
@@ -20,9 +21,23 @@ export interface RunRecord {
   readonly rep: number;
   readonly outcome: Outcome;
   readonly score: number | undefined;
-  /** Wall-clock time of the attempt that got a reply; retries' waits excluded. */
+  /**
+   * From sending the attempt that got a reply to holding the whole message;
+   * failed attempts and the waits between retries are excluded. `undefined`
+   * unless the reply completed.
+   */
   readonly latencyMs: number | undefined;
-  /** The API's own token counts; `undefined` when no reply came back. */
+  /**
+   * From sending that attempt to the first piece of reply text. On a model
+   * that thinks first, this includes the thinking. `undefined` when no text
+   * arrived.
+   */
+  readonly firstTextMs: number | undefined;
+  /**
+   * The API's own token counts: the complete message's, or for a reply that
+   * failed part-way, what the stream reported before it stopped. `undefined`
+   * when no reply started.
+   */
   readonly usage: Anthropic.Usage | undefined;
   /** Computed from `usage`, never estimated. */
   readonly costUsd: number | undefined;
@@ -68,7 +83,7 @@ export function planRequests(cells: readonly BenchmarkCell[], reps: number): Pla
  * {@link buildMessageParams} — so a temperature is sent only when the cell
  * sets one — plus the technique's system prompt and the stop sequence.
  */
-export function buildRequest(cell: BenchmarkCell): Anthropic.MessageCreateParamsNonStreaming {
+export function buildRequest(cell: BenchmarkCell): Anthropic.MessageStreamParams {
   const { system, messages } = buildPrompt(cell.technique, cell.benchmarkCase);
   const config: ChatConfig = {
     model: cell.model,
@@ -79,34 +94,73 @@ export function buildRequest(cell: BenchmarkCell): Anthropic.MessageCreateParams
   return { ...buildMessageParams(config, messages), system, stop_sequences: [STOP_SEQUENCE] };
 }
 
+function replyText(message: Anthropic.Message): string {
+  return message.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("");
+}
+
+interface OpenedStream {
+  started: number;
+  stream: ReplyStream;
+  events: AsyncIterator<Anthropic.MessageStreamEvent>;
+  first: IteratorResult<Anthropic.MessageStreamEvent>;
+}
+
 /**
- * Sends one request, retrying transient failures, and records what came
- * back. A failed request, a refusal and a reply without a valid score are all
- * recorded as outcomes. The one error rethrown is a rejected API key
- * (`Anthropic.AuthenticationError`), since no later request could succeed.
+ * Sends one request and records what came back. It streams, as the CLI does,
+ * and, like the CLI, retries only until the reply's first event: once
+ * `message_start` has arrived the input is billed, so a failure after that is
+ * recorded rather than paid for twice.
+ *
+ * A failed request, a refusal, a cut-off reply and a reply without a valid
+ * score are all recorded as outcomes. The one error rethrown is a rejected API
+ * key (`Anthropic.AuthenticationError`), since no later request could succeed.
  */
 export async function runRequest(
   { cell, rep }: PlannedRequest,
   options: RunOptions,
 ): Promise<RunRecord> {
   const params = buildRequest(cell);
+  // Nothing aborts a request: a run stopped with Ctrl-C keeps what its
+  // records file already holds, and a half-finished request adds nothing.
+  const signal = new AbortController().signal;
+  const open = async (): Promise<OpenedStream> => {
+    const started = options.now();
+    const stream = options.client.messages.stream(params, { signal });
+    const events = stream[Symbol.asyncIterator]();
+    return { started, stream, events, first: await events.next() };
+  };
+
+  let usage: Anthropic.Usage | undefined;
+  let firstTextMs: number | undefined;
   let latencyMs: number | undefined;
   let message: Anthropic.Message;
   try {
-    message = await withRetry(
-      async () => {
-        const started = options.now();
-        const reply = await options.client.messages.create(params);
-        latencyMs = options.now() - started;
-        return reply;
-      },
-      {
-        maxRetries: options.maxRetries,
-        sleep: options.sleep,
-        random: options.random,
-        onRetry: options.onRetry,
-      },
-    );
+    const { started, stream, events, first } = await withRetry(open, {
+      maxRetries: options.maxRetries,
+      sleep: options.sleep,
+      random: options.random,
+      onRetry: options.onRetry,
+    });
+    for (let next = first; next.done !== true; next = await events.next()) {
+      const event = next.value;
+      if (event.type === "message_start") {
+        usage = { ...event.message.usage };
+      } else if (event.type === "message_delta") {
+        usage = withDelta(usage, event.usage);
+      } else if (
+        event.type === "content_block_delta" &&
+        event.delta.type === "text_delta" &&
+        firstTextMs === undefined
+      ) {
+        firstTextMs = options.now() - started;
+      }
+    }
+    // Also rejects with a failure the event iterator ended on quietly.
+    message = await stream.finalMessage();
+    latencyMs = options.now() - started;
   } catch (error) {
     if (error instanceof Anthropic.AuthenticationError) {
       throw error;
@@ -117,15 +171,16 @@ export async function runRequest(
       outcome: "error",
       score: undefined,
       latencyMs: undefined,
-      usage: undefined,
-      costUsd: undefined,
+      firstTextMs,
+      usage,
+      costUsd: usage === undefined ? undefined : costUsd(cell.model, usage),
       stopReason: undefined,
       text: undefined,
       error: describeFailure(error, cell.model.id),
     };
   }
 
-  const text = responseText(message);
+  const text = replyText(message);
   // A cut-off reply is never parsed: "<score>7" may be the start of 72.
   const truncated =
     message.stop_reason === "max_tokens" || message.stop_reason === "model_context_window_exceeded";
@@ -145,6 +200,7 @@ export async function runRequest(
     outcome,
     score,
     latencyMs,
+    firstTextMs,
     usage: message.usage,
     costUsd: costUsd(cell.model, message.usage),
     stopReason: message.stop_reason,
@@ -168,6 +224,7 @@ export function recordToJson(record: RunRecord): string {
     outcome: record.outcome,
     score: record.score ?? null,
     latencyMs: record.latencyMs ?? null,
+    firstTextMs: record.firstTextMs ?? null,
     costUsd: record.costUsd ?? null,
     stopReason: record.stopReason ?? null,
     usage: record.usage ?? null,

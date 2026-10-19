@@ -1,61 +1,24 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
+import { apiError, fakeClient, reply, type ScriptedReply } from "@/fake-client.js";
 import { runBenchmark, type BenchmarkDeps } from "./command.js";
 import { expandGrid } from "./grid.js";
 
 const API_KEY = "fake-key-for-tests-0123456789";
 const CELLS = expandGrid().length;
 
-function reply(
-  text: string,
-  stopReason: Anthropic.StopReason = "stop_sequence",
-): Anthropic.Message {
-  return {
-    id: "msg_test",
-    type: "message",
-    role: "assistant",
-    model: "claude-haiku-4-5",
-    content: [{ type: "text", text, citations: null }],
-    container: null,
-    diagnostics: null,
-    stop_details: null,
-    stop_reason: stopReason,
-    stop_sequence: null,
-    usage: {
-      cache_creation: null,
-      cache_creation_input_tokens: null,
-      cache_read_input_tokens: null,
-      inference_geo: null,
-      input_tokens: 800,
-      output_tokens: 5,
-      output_tokens_details: null,
-      server_tool_use: null,
-      service_tier: null,
-      speed: null,
-    },
-  };
-}
-
-function apiError(status: number, type: string, message = `${type} message`) {
-  return Anthropic.APIError.generate(
-    status,
-    { type: "error", error: { type, message } },
-    undefined,
-    new Headers(),
-  );
-}
-
 /**
- * Fakes everything the benchmark touches. The fake client answers with
- * `answer(n)` for the n-th request (0-based), throwing it if it is an error.
+ * Fakes everything the benchmark touches. The client streams `answer(n)` for
+ * the n-th request (0-based) through the SDK's own `MessageStream`, as the
+ * shared fake client does.
  */
 function harness(
-  answer: (index: number) => Anthropic.Message | Error = () => reply("<score>70"),
+  answer: (index: number) => ScriptedReply = () => reply("<score>70", "stop_sequence"),
   env: Record<string, string | undefined> = { ANTHROPIC_API_KEY: API_KEY },
 ) {
   const stdout: string[] = [];
   const stderr: string[] = [];
-  const requests: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const requests: Anthropic.MessageStreamParams[] = [];
   const appended = new Map<string, string>();
   const written = new Map<string, string>();
   const clientKeys: string[] = [];
@@ -68,11 +31,10 @@ function harness(
       clientKeys.push(apiKey);
       return {
         messages: {
-          create: async (params) => {
-            const outcome = answer(requests.length);
+          stream: (params, options) => {
+            const scripted = answer(requests.length);
             requests.push(params);
-            if (outcome instanceof Error) throw outcome;
-            return outcome;
+            return fakeClient([scripted]).client.messages.stream(params, options);
           },
         },
       };

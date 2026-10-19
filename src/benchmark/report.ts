@@ -74,6 +74,13 @@ const COLUMNS: ReadonlyArray<{
     },
   },
   {
+    header: "First text s, mean",
+    value: (_, records) => {
+      const times = records.flatMap((record) => record.firstTextMs ?? []);
+      return times.length === 0 ? "—" : seconds(mean(times));
+    },
+  },
+  {
     header: "Tokens in / out, mean",
     value: (_, records) => {
       const usages = records.flatMap((record) => record.usage ?? []);
@@ -181,9 +188,8 @@ export function renderReport(
  * The most a set of requests could cost: every reply running to
  * `max_tokens`, and every prompt costed at two characters per token, more
  * generous than any current tokenizer. The real cost is far lower. Each
- * request is counted once: a retry after a connection dropped once the reply
- * was already generated may be billed again, so only such a retry can take a
- * run past this figure.
+ * request is counted once, because one is retried only while its reply has
+ * not started: once the first event arrives, a failure is recorded instead.
  */
 export function costCeilingUsd(requests: readonly PlannedRequest[]): number {
   return requests.reduce((sum, { cell }) => {

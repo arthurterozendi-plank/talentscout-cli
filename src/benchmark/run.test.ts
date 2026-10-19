@@ -1,47 +1,36 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MAX_TOKENS } from "@/config.js";
+import {
+  apiError,
+  blockStop,
+  fakeClient,
+  LiveReply,
+  messageDelta,
+  messageStart,
+  messageStop,
+  streamError,
+  textDelta,
+  textStart,
+  type ScriptedReply,
+} from "@/fake-client.js";
 import { expandGrid, type BenchmarkCell } from "./grid.js";
 import { buildRequest, planRequests, recordToJson, runRequest, type RunOptions } from "./run.js";
 
+/** Every event of a streamed reply whose text is `text`. */
 function reply(
   text: string,
   stopReason: Anthropic.StopReason = "stop_sequence",
   tokens = { input: 1_000, output: 10 },
-): Anthropic.Message {
-  return {
-    id: "msg_test",
-    type: "message",
-    role: "assistant",
-    model: "claude-sonnet-4-6",
-    content: [{ type: "text", text, citations: null }],
-    container: null,
-    diagnostics: null,
-    stop_details: null,
-    stop_reason: stopReason,
-    stop_sequence: stopReason === "stop_sequence" ? "</score>" : null,
-    usage: {
-      cache_creation: null,
-      cache_creation_input_tokens: null,
-      cache_read_input_tokens: null,
-      inference_geo: null,
-      input_tokens: tokens.input,
-      output_tokens: tokens.output,
-      output_tokens_details: null,
-      server_tool_use: null,
-      service_tier: null,
-      speed: null,
-    },
-  };
-}
-
-function apiError(status: number, type: string) {
-  return Anthropic.APIError.generate(
-    status,
-    { type: "error", error: { type, message: `${type} message` } },
-    undefined,
-    new Headers(),
-  );
+): Anthropic.MessageStreamEvent[] {
+  return [
+    messageStart({ input_tokens: tokens.input }),
+    textStart(),
+    textDelta(text),
+    blockStop(),
+    messageDelta(stopReason, { output_tokens: tokens.output }),
+    messageStop,
+  ];
 }
 
 function cell(modelId: string, temperature: number | undefined): BenchmarkCell {
@@ -57,32 +46,27 @@ function cell(modelId: string, temperature: number | undefined): BenchmarkCell {
 }
 
 /**
- * A fake client answering with each of `outcomes` in turn, and a clock that
- * returns each of `ticks` in turn.
+ * The fake streaming client answering with each of `replies` in turn, and a
+ * clock that returns each of `ticks` in turn. `now()` is read when an attempt
+ * is sent, when its first text arrives, and when its message is complete.
  */
-function options(outcomes: Array<Anthropic.Message | Error>, ticks: number[] = []) {
+function options(replies: ScriptedReply[], ticks: number[] = []) {
   const sleeps: number[] = [];
-  let requests = 0;
+  const fake = fakeClient(replies);
+  let clockReads = 0;
   const opts: RunOptions = {
-    client: {
-      messages: {
-        create: async () => {
-          requests++;
-          const outcome = outcomes.shift();
-          if (outcome === undefined) throw new Error("the fake client has no more outcomes");
-          if (outcome instanceof Error) throw outcome;
-          return outcome;
-        },
-      },
-    },
+    client: fake.client,
     maxRetries: 2,
     sleep: async (ms) => {
       sleeps.push(ms);
     },
     random: () => 0,
-    now: () => ticks.shift() ?? 0,
+    now: () => {
+      clockReads++;
+      return ticks.shift() ?? 0;
+    },
   };
-  return { opts, sleeps, requests: () => requests };
+  return { opts, sleeps, requests: fake.requests, clockReads: () => clockReads };
 }
 
 describe("buildRequest", () => {
@@ -122,15 +106,21 @@ describe("planRequests", () => {
 describe("runRequest", () => {
   const sonnet = cell("claude-sonnet-4-6", 0);
 
-  it("records the score, the latency and the cost computed from usage", async () => {
+  it("records the score, both latencies and the cost computed from usage", async () => {
     const { opts } = options(
       [reply("<score>72", "stop_sequence", { input: 1_000, output: 10 })],
-      [100, 1_350],
+      [100, 600, 1_350],
     );
 
     const record = await runRequest({ cell: sonnet, rep: 2 }, opts);
 
-    expect(record).toMatchObject({ rep: 2, outcome: "scored", score: 72, latencyMs: 1_250 });
+    expect(record).toMatchObject({
+      rep: 2,
+      outcome: "scored",
+      score: 72,
+      firstTextMs: 500,
+      latencyMs: 1_250,
+    });
     // claude-sonnet-4-6: $3 per million input tokens, $15 per million output tokens.
     expect(record.costUsd).toBeCloseTo((1_000 * 3 + 10 * 15) / 1_000_000, 10);
     expect(record.usage?.input_tokens).toBe(1_000);
@@ -174,17 +164,55 @@ describe("runRequest", () => {
     expect(record).toMatchObject({ outcome: "refusal", score: undefined });
   });
 
-  it("retries a transient failure and times only the attempt that got a reply", async () => {
+  it("retries a failure to open the stream and times only the attempt that got a reply", async () => {
     const { opts, sleeps, requests } = options(
       [apiError(529, "overloaded_error"), reply("<score>80")],
-      [0, 5_000, 5_800],
+      [0, 5_000, 5_300, 5_800],
     );
 
     const record = await runRequest({ cell: sonnet, rep: 1 }, opts);
 
-    expect(requests()).toBe(2);
+    expect(requests).toHaveLength(2);
     expect(sleeps).toHaveLength(1);
-    expect(record).toMatchObject({ outcome: "scored", score: 80, latencyMs: 800 });
+    expect(record).toMatchObject({
+      outcome: "scored",
+      score: 80,
+      firstTextMs: 300,
+      latencyMs: 800,
+    });
+  });
+
+  it("never retries once the reply has started, and keeps the usage it reported", async () => {
+    const live = new LiveReply();
+    const { opts, requests, clockReads } = options([live, reply("<score>80")]);
+
+    const pending = runRequest({ cell: sonnet, rep: 1 }, opts);
+    live.send(messageStart({ input_tokens: 1_000 }), textStart(), textDelta("<analysis>"));
+    // Sent, then first text: the reply is under way.
+    await vi.waitFor(() => expect(clockReads()).toBe(2));
+    live.fail(new Anthropic.APIConnectionError({ message: "socket hang up" }));
+    const record = await pending;
+
+    expect(requests).toHaveLength(1);
+    expect(record).toMatchObject({ outcome: "error", score: undefined, latencyMs: undefined });
+    expect(record.usage?.input_tokens).toBe(1_000);
+    // claude-sonnet-4-6 at $3 per million input tokens; the start reports 1 output token.
+    expect(record.costUsd).toBeCloseTo((1_000 * 3 + 1 * 15) / 1_000_000, 10);
+    expect(record.error).toEqual(expect.any(String));
+  });
+
+  it("records an error event inside a started stream, with the reason the API gave", async () => {
+    const live = new LiveReply();
+    const { opts, clockReads } = options([live]);
+
+    const pending = runRequest({ cell: sonnet, rep: 1 }, opts);
+    live.send(messageStart(), textStart(), textDelta("<analysis>"));
+    await vi.waitFor(() => expect(clockReads()).toBe(2));
+    live.fail(streamError("overloaded_error", "Overloaded"));
+
+    const record = await pending;
+    expect(record.outcome).toBe("error");
+    expect(record.error).toContain("stopped the reply with an error (overloaded_error)");
   });
 
   it("records a request that kept failing as an error, with no usage or cost", async () => {
@@ -196,7 +224,7 @@ describe("runRequest", () => {
 
     const record = await runRequest({ cell: sonnet, rep: 1 }, opts);
 
-    expect(requests()).toBe(3);
+    expect(requests).toHaveLength(3);
     expect(record).toMatchObject({
       outcome: "error",
       score: undefined,
@@ -211,7 +239,7 @@ describe("runRequest", () => {
 
     const record = await runRequest({ cell: sonnet, rep: 1 }, opts);
 
-    expect(requests()).toBe(1);
+    expect(requests).toHaveLength(1);
     expect(record.error).toContain("rejected the request (400)");
   });
 
@@ -226,7 +254,7 @@ describe("runRequest", () => {
 
 describe("recordToJson", () => {
   it("flattens the cell to IDs and writes a default temperature as null", async () => {
-    const { opts } = options([reply("<score>55")], [0, 2_000]);
+    const { opts } = options([reply("<score>55")], [0, 400, 2_000]);
     const record = await runRequest({ cell: cell("claude-haiku-5-5", undefined), rep: 3 }, opts);
 
     expect(JSON.parse(recordToJson(record))).toMatchObject({
@@ -238,6 +266,7 @@ describe("recordToJson", () => {
       outcome: "scored",
       score: 55,
       latencyMs: 2_000,
+      firstTextMs: 400,
       text: "<score>55",
     });
   });

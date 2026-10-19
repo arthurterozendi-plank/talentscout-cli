@@ -75,14 +75,30 @@ cell. The table lists every
 repetition's score, then the mean and the spread (highest minus lowest): two configurations whose
 means differ by less than their spreads have not been shown to differ.
 
-For every request the run records the outcome (`scored`, `malformed`, `truncated`, `refusal`,
-`error`), the latency of the attempt that got a reply (retry waits excluded), the token counts the
-API returned, and the cost computed from them by `costUsd` in `src/models.ts`, using Anthropic's
-list prices as published on 2026-10-19. No cost is estimated.
+For every request the run records:
 
-Held fixed for every request: `max_tokens` 16,000, no prompt caching (so no repetition is cheaper
-or faster for a cache hit), non-streaming requests sent one at a time, and thinking and effort left
-at each model's default.
+- the outcome: `scored`, `malformed`, `truncated`, `refusal` or `error`;
+- **latency**, from sending the attempt that got a reply to holding the complete message. Failed
+  attempts and the waits between retries are excluded;
+- **time to first text**, from sending that attempt to the first piece of reply text. On a model
+  that thinks first, this includes the thinking;
+- the token counts the API returned, read from the complete message;
+- the cost computed from those counts by `costUsd` in `src/models.ts`, using Anthropic's list
+  prices as published on 2026-10-19. No cost is estimated.
+
+A reply that fails after it has started is recorded as `error`, with the usage the stream reported
+before it stopped, so the input it was billed for is still counted.
+
+Requests stream, exactly as the CLI sends them: through the same `buildMessageParams`, plus the
+system prompt and stop sequence. The outcome and score are read from the message the SDK assembles
+once the stream ends.
+
+Held fixed for every request:
+
+- `max_tokens` 32,000, the CLI's;
+- no prompt caching, so no repetition is cheaper or faster for a cache hit;
+- requests sent one at a time;
+- thinking and effort left at each model's default.
 
 ### Known confounds
 
@@ -105,9 +121,10 @@ at each model's default.
 **243 requests** (81 configurations × 3 repetitions). Every run, dry or live, prints the ceiling
 below before it sends anything.
 
-- **Ceiling: $52.97.** What the run would cost if every reply ran to `max_tokens` with every prompt
-  costed at two characters per token. Only a retry billed a second time could take a run past it:
-  that happens when a connection drops after the reply was already generated.
+- **Ceiling: $105.03.** What the run would cost if every reply ran to the 32,000-token
+  `max_tokens`, with every prompt costed at two characters per token. Each request counts once: a
+  request is retried only while its reply has not started, and a failure after that is recorded,
+  not sent again.
 - **Expected: about $2.35, and under $4 if the models write much more.** Computed with the
   assumptions below; the heavier case doubles the current models' output to 3,000 tokens and raises
   a chain-of-thought analysis on the 4.x models from 600 to 1,000.
@@ -149,13 +166,13 @@ A live run writes two files to `benchmarks/resume-scoring/results/`, both named 
 run started:
 
 - `<timestamp>.jsonl` — one line per request, appended as each completes: the configuration, the
-  outcome, the score, the reply's full text, its `usage`, latency and cost.
+  outcome, the score, the reply's full text, its `usage`, both latencies and the cost.
 - `<timestamp>.md` — the single comparison table, one row per configuration, written at the end
   and also printed to stdout.
 
-Transient failures (429, 5xx, dropped connections) are retried with the CLI's backoff; a request
-that still fails is recorded as `error` and the run continues. A rejected API key stops the run, and
-the table is written with what it had.
+Transient failures (429, 5xx, dropped connections) before a reply starts are retried with the
+CLI's backoff. A request that still fails, or whose reply fails part-way, is recorded as `error`,
+and the run continues. A rejected API key stops the run, and the table is written with what it had.
 
 ## What the run has to decide
 

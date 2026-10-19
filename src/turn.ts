@@ -59,10 +59,13 @@ async function open(
   return { stream, events, first: await events.next() };
 }
 
-// Every counter in `message_delta` is a running total for the whole message,
-// so it replaces the one from `message_start` rather than adding to it; a null
-// means this delta does not report that counter.
-function withDelta(
+/**
+ * `usage` as a streamed reply's `message_delta` updates it. Every counter in
+ * the delta is a running total for the whole message, so it replaces the one
+ * from `message_start` rather than adding to it; a null means this delta does
+ * not report that counter. `undefined` until `message_start` has arrived.
+ */
+export function withDelta(
   usage: Anthropic.Usage | undefined,
   delta: Anthropic.MessageDeltaUsage,
 ): Anthropic.Usage | undefined {

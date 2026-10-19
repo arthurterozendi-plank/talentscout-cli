@@ -154,8 +154,8 @@ export async function runBenchmark(argv: string[], deps: BenchmarkDeps): Promise
   stderr(
     `${live ? "sending" : "dry run — pass --live to send"} ${requests.length} requests ` +
       `(${cells.length} configurations × ${reps} reps). If every reply ran to max_tokens, a ` +
-      `live run would cost $${costCeilingUsd(requests).toFixed(2)}, plus any retry billed ` +
-      "after a dropped connection; expect a small fraction of that.",
+      `live run would cost $${costCeilingUsd(requests).toFixed(2)}; expect a small fraction ` +
+      "of that.",
   );
 
   const client =

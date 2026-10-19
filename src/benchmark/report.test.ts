@@ -37,6 +37,8 @@ function record(
     outcome,
     score,
     latencyMs,
+    // A quarter of the latency, so the column's mean is checkable at a glance.
+    firstTextMs: latencyMs === undefined ? undefined : latencyMs / 4,
     usage: tokens === undefined ? undefined : usage(...tokens),
     costUsd,
     stopReason: undefined,
@@ -78,6 +80,7 @@ describe("renderTable", () => {
       "—",
       "—",
       "—",
+      "—",
     ]);
   });
 
@@ -94,6 +97,7 @@ describe("renderTable", () => {
       Spread: "6",
       Failed: "1/3",
       "Latency s, mean (min–max)": "2.0 (1.0–3.0)",
+      "First text s, mean": "0.5",
       "Tokens in / out, mean": "1,000 / 20",
       "Cost per run, mean": "$0.00200",
     });
@@ -151,9 +155,9 @@ describe("costCeilingUsd", () => {
 
     const ceiling = costCeilingUsd([{ cell: opus, rep: 1 }]);
 
-    // 16,000 output tokens at $25 per million, plus a few thousand input tokens at $5.
-    expect(ceiling).toBeGreaterThan(0.4);
-    expect(ceiling).toBeLessThan(0.45);
+    // 32,000 output tokens at $25 per million, plus a few thousand input tokens at $5.
+    expect(ceiling).toBeGreaterThan(0.8);
+    expect(ceiling).toBeLessThan(0.85);
     expect(
       costCeilingUsd([
         { cell: opus, rep: 1 },

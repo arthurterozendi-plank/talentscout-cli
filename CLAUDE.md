@@ -58,7 +58,7 @@ modules; `benchmarks/resume-scoring/README.md` is its write-up and `results/` be
 | `fixtures.ts` | The resumes and job descriptions, as `CASES`.                                    |
 | `prompts.ts`  | The system prompt, each technique's user message, and `parseScore`.              |
 | `grid.ts`     | Which models run at which temperatures, expanded into every cell.                |
-| `run.ts`      | One request: building it, sending it with retries, recording its outcome.        |
+| `run.ts`      | One request: building it, streaming it with retries, recording its outcome.      |
 | `report.ts`   | The comparison table, the report around it, and the cost ceiling.                |
 | `dry-run.ts`  | The fake client every run without `--live` uses.                                 |
 
@@ -169,9 +169,10 @@ The observable contract `run()` implements:
   mistyped price fails `pnpm check`.
 - **The benchmark is a package script beside the CLI, not a CLI flag.** Its grid is fixed in code
   and it is run once to answer one question — which configuration to default to — so it has no
-  business in `cli.ts`'s contract. It reuses the CLI's
-  request shape (`buildMessageParams`), temperature rule (`checkTemperatureSupport`), retries and
-  error text, so a request it sends is one the CLI would send.
+  business in `cli.ts`'s contract. It reuses the CLI's request shape (`buildMessageParams`),
+  temperature rule (`checkTemperatureSupport`), streaming `MessagesClient`, retry rule (only until
+  a reply's first event) and error text, so a request it sends is one the CLI would send. Its
+  latency is the time to the complete message, and it also records the time to the first text.
 - **The benchmark is a dry run unless `--live` is passed.** A plain `pnpm benchmark` never builds
   a real client, even with `ANTHROPIC_API_KEY` set: a key exported for other tools must not turn a
   plain run into spend. `--live` is the only way to make paid calls; there is no `--dry-run` flag,
