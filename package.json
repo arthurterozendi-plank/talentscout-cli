@@ -9,6 +9,7 @@
   "packageManager": "pnpm@11.5.0",
   "scripts": {
     "cli": "tsx src/main.ts",
+    "benchmark": "tsx src/benchmark/main.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
