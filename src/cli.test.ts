@@ -541,4 +541,19 @@ describe("slash commands in a conversation", () => {
     expect(cli.stderr()).toContain('unknown model "gpt-5"; still using claude-sonnet-5-5.');
     expect(cli.stderr()).not.toContain("left out of the conversation");
   });
+
+  it("sends the prompt /system sets, confirms it, and does not fail the conversation", async () => {
+    const cli = harness([reply("Ask about on-call."), reply("On-call?")], {
+      lines: ["Suggest an interview question", "/system", "/system Be terse.", "Again"],
+    });
+
+    await expect(run([], cli.deps)).resolves.toBe(0);
+
+    expect(cli.requests[0]).not.toHaveProperty("system");
+    expect(cli.requests[1]?.system).toBe("Be terse.");
+    expect(cli.stderr()).toContain("talentscout-cli: system prompt: none.");
+    expect(cli.stderr()).toContain(
+      'talentscout-cli: system prompt replaced. Was: none. Now: "Be terse.".',
+    );
+  });
 });

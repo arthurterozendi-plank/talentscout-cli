@@ -20,6 +20,7 @@ import { createSession, handleInput, sendMessage, type InputIo } from "./session
 const haiku: ChatConfig = {
   model: { id: "claude-haiku-4-5", acceptsTemperature: true },
   temperature: undefined,
+  system: undefined,
   maxTokens: 16_000,
   maxRetries: 0,
 };
@@ -294,5 +295,127 @@ describe("handleInput: other slash commands", () => {
     await handleInput(createSession(haiku), "/", chat.io);
 
     expect(chat.notices).toEqual([`Commands:\n${describeCommands()}`]);
+  });
+});
+
+describe("handleInput: /system", () => {
+  /** A reply as current models send it: an empty thinking block with a signature, then text. */
+  function thoughtReply(text: string, signature: string): ScriptedReply {
+    return [
+      messageStart(),
+      ...thinkingBlock(0, signature),
+      textStart(1),
+      textDelta(text, 1),
+      blockStop(1),
+      messageDelta(),
+      messageStop,
+    ];
+  }
+
+  it("sends the new system prompt with the next request, and the history without thinking", async () => {
+    const chat = setup([thoughtReply("Ask about on-call.", "sig-1"), reply("On-call?")]);
+    const session = createSession(haiku);
+    await handleInput(session, "One question, please", chat.io);
+
+    await expect(handleInput(session, "/system Be terse.", chat.io)).resolves.toBeUndefined();
+    expect(chat.requests).toHaveLength(1);
+    await handleInput(session, "Another", chat.io);
+
+    expect(chat.requests[1]?.system).toBe("Be terse.");
+    expect(chat.requests[1]?.messages).toEqual([
+      { role: "user", content: "One question, please" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Ask about on-call.", citations: null }],
+      },
+      { role: "user", content: "Another" },
+    ]);
+  });
+
+  it("confirms the change, showing the old prompt and the new, and that reasoning was dropped", async () => {
+    const chat = setup([thoughtReply("Ask about on-call.", "sig-1")]);
+    const session = createSession(haiku);
+    await handleInput(session, "One question, please", chat.io);
+
+    await handleInput(session, "/system Be terse.", chat.io);
+    await handleInput(session, "/system Answer in French.", chat.io);
+
+    expect(chat.notices).toEqual([
+      'system prompt replaced. Was: none. Now: "Be terse.".\n' +
+        "Earlier reasoning was dropped: the API rejects reasoning written under a different " +
+        "system prompt, so earlier replies keep only their text.",
+      'system prompt replaced. Was: "Be terse.". Now: "Answer in French.".',
+    ]);
+  });
+
+  it("drops an exchange whose reply was only reasoning, so roles still alternate", async () => {
+    const chat = setup([
+      [messageStart(), ...thinkingBlock(0, "sig-1"), messageDelta(), messageStop],
+      thoughtReply("Ask about incidents.", "sig-2"),
+      reply("Incidents?"),
+    ]);
+    const session = createSession(haiku);
+    await handleInput(session, "First", chat.io);
+    await handleInput(session, "Second", chat.io);
+
+    await handleInput(session, "/system Be terse.", chat.io);
+    await handleInput(session, "Third", chat.io);
+
+    expect(chat.requests[2]?.messages).toEqual([
+      { role: "user", content: "Second" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Ask about incidents.", citations: null }],
+      },
+      { role: "user", content: "Third" },
+    ]);
+    expect(chat.notices.at(-1)).toMatch(
+      /\n1 exchange whose reply held nothing but reasoning left the conversation\.$/,
+    );
+  });
+
+  it("strips nothing, and says so, when the prompt is the one already in effect", async () => {
+    const chat = setup([thoughtReply("Ask about on-call.", "sig-1")]);
+    const config = { ...haiku, system: "Be terse." };
+    const session = createSession(config);
+    await handleInput(session, "One question, please", chat.io);
+    const history = structuredClone(session.history);
+
+    await handleInput(session, "/system Be terse.", chat.io);
+
+    expect(session.config).toBe(config);
+    expect(session.history).toEqual(history);
+    expect(chat.notices).toEqual(['the system prompt is already "Be terse."; nothing changed.']);
+  });
+
+  it("shows the prompt, or none, and changes nothing when given no text", async () => {
+    const chat = setup([thoughtReply("Ask about on-call.", "sig-1")]);
+    const session = createSession(haiku);
+    await handleInput(session, "One question, please", chat.io);
+    const history = structuredClone(session.history);
+
+    await handleInput(session, "/system", chat.io);
+
+    expect(session.config).toBe(haiku);
+    expect(session.history).toEqual(history);
+    expect(chat.notices).toEqual(["system prompt: none. Type /system <prompt> to replace it."]);
+
+    await handleInput(session, "/system Be terse.", chat.io);
+    await handleInput(session, "/system", chat.io);
+
+    expect(chat.notices.at(-1)).toBe(
+      'system prompt: "Be terse.". Type /system <prompt> to replace it.',
+    );
+  });
+
+  it("keeps the system prompt across a /model switch", async () => {
+    const chat = setup([reply("Hi")]);
+    const session = createSession(haiku);
+
+    await handleInput(session, "/system Be terse.", chat.io);
+    await handleInput(session, "/model opus", chat.io);
+    await handleInput(session, "Hello", chat.io);
+
+    expect(chat.requests[0]).toMatchObject({ model: "claude-opus-5-5", system: "Be terse." });
   });
 });

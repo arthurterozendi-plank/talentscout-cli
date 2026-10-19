@@ -11,6 +11,11 @@ export interface ChatConfig {
   readonly model: ModelInfo;
   /** `undefined` leaves the parameter out, so the model uses its own default. */
   readonly temperature: number | undefined;
+  /**
+   * The top-level system prompt. `undefined` sends none, which is how every
+   * run starts: only `/system` sets one.
+   */
+  readonly system: string | undefined;
   readonly maxTokens: number;
   readonly maxRetries: number;
 }
@@ -76,7 +81,10 @@ export function buildConfig(flags: ConfigFlags): ConfigResult {
     }
   }
 
-  return { ok: true, config: { model, temperature, maxTokens: MAX_TOKENS, maxRetries } };
+  return {
+    ok: true,
+    config: { model, temperature, system: undefined, maxTokens: MAX_TOKENS, maxRetries },
+  };
 }
 
 /**

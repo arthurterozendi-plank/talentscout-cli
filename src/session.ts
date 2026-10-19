@@ -15,6 +15,8 @@ export interface Session {
    * Completed exchanges only, oldest first: each user message followed by the
    * assistant reply to it, with every content block the API returned —
    * thinking blocks included, since the API expects those sent back unchanged.
+   * Append-only, with one exception: `/system` removes every thinking block,
+   * which a new system prompt would otherwise make the API reject.
    */
   readonly history: Anthropic.MessageParam[];
 }

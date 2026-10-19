@@ -6,6 +6,7 @@ import type { ChatConfig } from "./config.js";
 const config: ChatConfig = {
   model: { id: "claude-haiku-4-5", acceptsTemperature: true },
   temperature: undefined,
+  system: undefined,
   maxTokens: 16_000,
   maxRetries: 4,
 };
@@ -30,6 +31,14 @@ describe("buildMessageParams", () => {
 
   it("leaves temperature out entirely when it is unset", () => {
     expect(buildMessageParams(config, prompt)).not.toHaveProperty("temperature");
+  });
+
+  it("sends the system prompt when there is one, and leaves it out when there is none", () => {
+    expect(buildMessageParams({ ...config, system: "Be terse." }, prompt)).toHaveProperty(
+      "system",
+      "Be terse.",
+    );
+    expect(buildMessageParams(config, prompt)).not.toHaveProperty("system");
   });
 });
 

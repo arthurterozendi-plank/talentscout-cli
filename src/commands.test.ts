@@ -6,6 +6,7 @@ import { createSession } from "./session.js";
 const config: ChatConfig = {
   model: { id: "claude-haiku-4-5", acceptsTemperature: true },
   temperature: undefined,
+  system: undefined,
   maxTokens: 32_000,
   maxRetries: 0,
 };
