@@ -96,8 +96,8 @@ at each model's default.
 
 ## What the live run will cost
 
-**243 requests** (81 configurations × 3 repetitions). The run prints both figures below before it
-sends anything.
+**243 requests** (81 configurations × 3 repetitions). Every run, dry or live, prints the ceiling
+below before it sends anything.
 
 - **Ceiling: $52.98.** What the run would cost if every reply ran to `max_tokens` with every prompt
   costed at two characters per token. No run can cost more.
@@ -126,13 +126,17 @@ Requests go out one at a time, so expect the run to take tens of minutes.
 ## How to run it
 
 ```bash
-pnpm benchmark --dry-run   # no key, requests or files: made-up replies, the plan and the ceiling
+pnpm benchmark          # dry run: no key, requests or files; made-up replies, the plan, the ceiling
 export ANTHROPIC_API_KEY=...
-pnpm benchmark             # the live run
+pnpm benchmark --live   # the paid run
 ```
 
-`--reps <n>` sets the repetitions (2 to 10) and `--out <dir>` where results go. A live run without
-`ANTHROPIC_API_KEY` is refused before anything is sent.
+**Only `--live` sends requests.** Without it the run is a dry run against a fake client even when
+`ANTHROPIC_API_KEY` is set: a key exported for other tools must not turn a plain run into spend.
+`--live` without `ANTHROPIC_API_KEY` is refused before anything is sent, and a live run prints its
+cost ceiling before the first request.
+
+`--reps <n>` sets the repetitions (2 to 10) and `--out <dir>` where a live run writes its results.
 
 A live run writes two files to `benchmarks/resume-scoring/results/`, both named for the time the
 run started:

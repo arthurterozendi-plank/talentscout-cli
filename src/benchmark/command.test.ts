@@ -111,12 +111,12 @@ describe("runBenchmark", () => {
     expect(h.clientKeys).toEqual([]);
   });
 
-  it("refuses a live run without ANTHROPIC_API_KEY before anything is sent or written", async () => {
+  it("refuses --live without ANTHROPIC_API_KEY before anything is sent or written", async () => {
     const h = harness(undefined, {});
 
-    expect(await runBenchmark([], h.deps)).toBe(1);
+    expect(await runBenchmark(["--live"], h.deps)).toBe(1);
     expect(h.stderr()).toContain("ANTHROPIC_API_KEY is not set");
-    expect(h.stderr()).toContain("--dry-run");
+    expect(h.stderr()).toContain("leave out --live for a dry run");
     expect(h.clientKeys).toEqual([]);
     expect(h.requests).toEqual([]);
     expect(h.written.size + h.appended.size).toBe(0);
@@ -138,25 +138,32 @@ describe("runBenchmark", () => {
     expect(h.requests).toEqual([]);
   });
 
-  it("runs the whole pipeline in a dry run with no key, no client and no files", async () => {
-    const h = harness(undefined, {});
+  it.each([
+    ["no key", {}],
+    ["a key exported for other tools", { ANTHROPIC_API_KEY: API_KEY }],
+  ])(
+    "without --live, runs the whole pipeline as a dry run with %s: no client, no request, no file",
+    async (_, env) => {
+      const h = harness(undefined, env);
 
-    expect(await runBenchmark(["--dry-run"], h.deps)).toBe(0);
+      expect(await runBenchmark([], h.deps)).toBe(0);
 
-    expect(h.clientKeys).toEqual([]);
-    expect(h.written.size + h.appended.size).toBe(0);
-    expect(h.stdout()).toContain("**Dry run.**");
-    const rows = tableRows(h.stdout());
-    expect(rows).toHaveLength(CELLS);
-    expect(rows.every((row) => !row.includes("not run"))).toBe(true);
-    expect(h.stderr()).toContain(`a live run would send ${CELLS * 3} requests`);
-    expect(h.stderr()).toMatch(/cannot cost more than \$\d+\.\d\d/);
-  });
+      expect(h.clientKeys).toEqual([]);
+      expect(h.requests).toEqual([]);
+      expect(h.written.size + h.appended.size).toBe(0);
+      expect(h.stdout()).toContain("**Dry run.**");
+      const rows = tableRows(h.stdout());
+      expect(rows).toHaveLength(CELLS);
+      expect(rows.every((row) => !row.includes("not run"))).toBe(true);
+      expect(h.stderr()).toContain(`pass --live to send ${CELLS * 3} requests`);
+      expect(h.stderr()).toMatch(/A live run cannot cost more than \$\d+\.\d\d/);
+    },
+  );
 
   it("sends every cell --reps times, never a temperature to a model that rejects one", async () => {
     const h = harness();
 
-    expect(await runBenchmark(["--reps", "2"], h.deps)).toBe(0);
+    expect(await runBenchmark(["--live", "--reps", "2"], h.deps)).toBe(0);
 
     expect(h.clientKeys).toEqual([API_KEY]);
     expect(h.requests).toHaveLength(CELLS * 2);
@@ -172,7 +179,7 @@ describe("runBenchmark", () => {
   it("appends one raw record per request and writes the same table it prints", async () => {
     const h = harness();
 
-    await runBenchmark(["--reps", "2", "--out", "results"], h.deps);
+    await runBenchmark(["--live", "--reps", "2", "--out", "results"], h.deps);
 
     const lines = h.appended.get("results/2026-10-19T12-34-56-789Z.jsonl")?.trimEnd().split("\n");
     expect(lines).toHaveLength(CELLS * 2);
@@ -192,7 +199,7 @@ describe("runBenchmark", () => {
           : reply("<score>70"),
     );
 
-    expect(await runBenchmark(["--reps", "2"], h.deps)).toBe(0);
+    expect(await runBenchmark(["--live", "--reps", "2"], h.deps)).toBe(0);
     const rows = tableRows(h.stdout());
     expect(rows[0]).toContain("malformed, 70");
     expect(rows[1]).toContain("error, 70");
@@ -202,7 +209,7 @@ describe("runBenchmark", () => {
   it("stops at a rejected API key and reports what it had", async () => {
     const h = harness(() => apiError(401, "authentication_error"));
 
-    expect(await runBenchmark([], h.deps)).toBe(1);
+    expect(await runBenchmark(["--live"], h.deps)).toBe(1);
 
     expect(h.requests).toHaveLength(1);
     expect(h.stdout()).toContain("**Stopped early:** The Anthropic API rejected the key");
@@ -213,7 +220,7 @@ describe("runBenchmark", () => {
   it("never writes the API key, even when the server echoes it", async () => {
     const h = harness(() => apiError(400, "invalid_request_error", `bad key ${API_KEY}`));
 
-    await runBenchmark(["--reps", "2"], h.deps);
+    await runBenchmark(["--live", "--reps", "2"], h.deps);
 
     const everything = [h.stdout(), h.stderr(), ...h.appended.values(), ...h.written.values()];
     expect(everything.join("")).not.toContain(API_KEY);

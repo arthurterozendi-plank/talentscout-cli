@@ -151,6 +151,7 @@ export function renderReport(
       ? [
           "> **Dry run.** Every reply below was made up by a fake client; no request reached the",
           "> API. The scores, latencies and costs show the pipeline works and mean nothing else.",
+          "> Pass `--live` for a real run.",
           "",
         ]
       : []),
