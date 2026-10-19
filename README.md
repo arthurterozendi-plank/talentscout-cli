@@ -1,8 +1,9 @@
 # talentscout-cli
 
-The Day 6 CLI chatbot and Day 7 tool sandbox for **TalentScout**, the AI recruiting copilot built
-across the [ai-eng-training](../ai-eng-training) programme. This is its own repository, not a
-workspace of that monorepo — see `CLAUDE.md` for why and for this repo's conventions.
+The Day 6 CLI chatbot and prompting benchmark, and the Day 7 tool sandbox, for **TalentScout**,
+the AI recruiting copilot built across the [ai-eng-training](../ai-eng-training) programme. This
+is its own repository, not a workspace of that monorepo — see `CLAUDE.md` for why and for this
+repo's conventions.
 
 ## Install
 
@@ -116,6 +117,30 @@ flag, a missing key, a rejected request, exhausted retries, a refusal — is exp
 exits `1`. A conversation explains a failed or refused turn and carries on; when input ends it
 exits `1` if any turn failed or was refused, and `0` only if every turn completed, so
 `cat prompts.txt | pnpm -s cli` can tell that some input got no usable answer.
+
+## Benchmark
+
+```bash
+pnpm benchmark          # dry run: no key, no spend; proves the pipeline, prints the cost ceiling
+pnpm benchmark --live   # the paid run: 243 requests; see the write-up for where results go
+```
+
+**Only `--live` sends requests.** A plain `pnpm benchmark` is a dry run against a fake client even
+when `ANTHROPIC_API_KEY` is set, because a key exported for other tools must not turn a plain run
+into spend.
+
+The resume-scoring benchmark (AI-52) runs one task the product needs — scoring a resume against a
+job description — with zero-shot, few-shot and chain-of-thought prompts on six models, each
+configuration three times, and produces one comparison table of every configuration's scores,
+latency and cost. `benchmarks/resume-scoring/README.md` is the write-up: the method, why
+temperature is compared on its own axis, what the live run will cost, and the pending conclusion.
+
+**It is a package script, not a CLI flag,** because it is a one-off experiment whose grid is fixed
+in code, and keeping it out of `cli.ts` leaves the chat CLI's contract as it is.
+
+**Prices live on each model in `src/models.ts`, and `costUsd` there is the only place tokens
+become dollars.** A request's cost is computed from its response's `usage`, never estimated, so
+the benchmark and any later cost display agree, and a price change is one edit.
 
 ## Check
 

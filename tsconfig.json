@@ -11,7 +11,10 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules"]
