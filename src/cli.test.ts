@@ -105,19 +105,20 @@ describe("help and usage", () => {
       const cli = harness([]);
 
       await expect(run(argv, cli.deps)).resolves.toBe(0);
-      expect(cli.stdout()).toMatch(/^Usage: talentscout-cli --model <id>/);
+      expect(cli.stdout()).toMatch(/^Usage: talentscout-cli \[--model <model>\]/);
       expect(cli.stderr()).toBe("");
       expect(cli.clientKeys).toEqual([]);
     },
   );
 
-  it("marks the models that accept --temperature", async () => {
+  it("lists the models, marking temperature support, the aliases and the default", async () => {
     const cli = harness([]);
 
     await run(["--help"], cli.deps);
 
     expect(cli.stdout()).toMatch(/^ {2}claude-haiku-4-5 \*$/m);
-    expect(cli.stdout()).toMatch(/^ {2}claude-haiku-5-5$/m);
+    expect(cli.stdout()).toMatch(/^ {2}claude-haiku-5-5 +alias "haiku"$/m);
+    expect(cli.stdout()).toMatch(/^ {2}claude-sonnet-5-5 +alias "sonnet", default$/m);
   });
 
   it("prints usage to stderr, names the flag, and exits 1 for an unknown flag", async () => {
@@ -175,6 +176,28 @@ describe("model and temperature", () => {
     expect(cli.stderr()).toContain("temperature=default");
   });
 
+  it("sends to claude-sonnet-5-5, and says so, when --model is omitted", async () => {
+    const cli = harness([reply("Hi")]);
+
+    await expect(run(["Hello"], cli.deps)).resolves.toBe(0);
+
+    expect(cli.requests[0]?.model).toBe("claude-sonnet-5-5");
+    expect(cli.stderr()).toContain("model=claude-sonnet-5-5");
+  });
+
+  it.each([
+    ["opus", "claude-opus-5-5"],
+    ["sonnet", "claude-sonnet-5-5"],
+    ["haiku", "claude-haiku-5-5"],
+  ])("sends --model %s to the API as %s", async (alias, id) => {
+    const cli = harness([reply("Hi")]);
+
+    await run(["--model", alias, "Hello"], cli.deps);
+
+    expect(cli.requests[0]?.model).toBe(id);
+    expect(cli.stderr()).toContain(`model=${id}`);
+  });
+
   it("joins unquoted words into one prompt", async () => {
     const cli = harness([reply("Hi")]);
 
@@ -208,13 +231,23 @@ describe("rejected before any request is sent", () => {
     },
   );
 
-  it("rejects a temperature for a model that would answer it with a 400", async () => {
+  it("rejects --model haiku --temperature 0, naming the models that accept a temperature", async () => {
     const cli = harness([]);
 
-    await expect(
-      run(["--model", "claude-haiku-5-5", "--temperature", "0", "Hello"], cli.deps),
-    ).resolves.toBe(1);
+    await expect(run(["--model", "haiku", "--temperature", "0", "Hello"], cli.deps)).resolves.toBe(
+      1,
+    );
     expect(cli.stderr()).toContain("claude-haiku-5-5 does not accept --temperature");
+    expect(cli.stderr()).toContain("claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5");
+    expect(cli.clientKeys).toEqual([]);
+    expect(cli.requests).toEqual([]);
+  });
+
+  it("rejects --temperature without --model, since the default model does not accept one", async () => {
+    const cli = harness([]);
+
+    await expect(run(["--temperature", "0.7", "Hello"], cli.deps)).resolves.toBe(1);
+    expect(cli.stderr()).toContain("claude-sonnet-5-5 does not accept --temperature");
     expect(cli.requests).toEqual([]);
   });
 });

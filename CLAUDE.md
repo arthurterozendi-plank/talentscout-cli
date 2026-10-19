@@ -35,8 +35,8 @@ own `CLAUDE.md` — and a directory inside the monorepo sharing all three would 
 | ----------- | -------------------------------------------------------------------------------- |
 | `main.ts`   | The only module touching `process`; wires the real deps into `run()`.            |
 | `cli.ts`    | `run(argv, deps)`: flag parsing, the order of checks, what goes to which stream. |
-| `models.ts` | `MODELS`, the models `--model` accepts, and which of them take a temperature.    |
-| `config.ts` | `buildConfig` (every check that needs no API call) and the startup echo.         |
+| `models.ts` | `MODELS` and which take a temperature, `MODEL_ALIASES`, `DEFAULT_MODEL_ID`.      |
+| `config.ts` | `buildConfig`, `checkTemperatureSupport`, and the startup echo.                  |
 | `client.ts` | SDK client construction and the one place a config becomes request params.       |
 | `retry.ts`  | `withRetry`: which errors are retried and how long to wait between attempts.     |
 | `errors.ts` | The human-readable text for every way a request can fail or be retried.          |
@@ -69,6 +69,10 @@ The observable contract `run()` implements:
 - `--help` or `-h`, or no arguments: usage on stdout, exit `0`.
 - One prompt per run, from the positional arguments joined with spaces. The reply alone goes to
   stdout; the settings echo, retry notices and errors go to stderr, so the reply can be piped.
+- `--model` takes a model ID or an alias (`opus`, `sonnet`, `haiku`, each the current generation
+  of its family) and defaults to `claude-sonnet-5-5`. `--temperature` is accepted only for a model
+  that takes one. `README.md` records why the aliases and the default are what they are; change
+  them there and in `models.ts` together.
 - Every check that needs no API call — flags, model, temperature, a prompt, the key — happens
   before the client is built, so a mistake never costs a request.
 - Any failure: an explanation on stderr, exit `1`. An unrecognised flag also prints usage.

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildConfig, DEFAULT_MAX_RETRIES, describeConfig, MAX_TOKENS } from "./config.js";
+import {
+  buildConfig,
+  checkTemperatureSupport,
+  DEFAULT_MAX_RETRIES,
+  describeConfig,
+  MAX_TOKENS,
+} from "./config.js";
 
 function rejection(flags: Parameters<typeof buildConfig>[0]): string {
   const result = buildConfig(flags);
@@ -30,18 +36,27 @@ describe("buildConfig", () => {
     expect(result.ok && result.config.temperature).toBeUndefined();
   });
 
-  it("requires --model", () => {
-    expect(rejection({})).toContain("--model");
+  it("uses claude-sonnet-5-5 when --model is omitted", () => {
+    const result = buildConfig({});
+
+    expect(result.ok && result.config.model.id).toBe("claude-sonnet-5-5");
+  });
+
+  it("resolves an alias to its model", () => {
+    const result = buildConfig({ model: "haiku" });
+
+    expect(result.ok && result.config.model.id).toBe("claude-haiku-5-5");
   });
 
   it.each(["claude-haiku-4.5", "Claude-Haiku-4-5", "gpt-4o", ""])(
-    "rejects the unknown model %j and lists the known ones",
+    "rejects the unknown model %j and lists the known IDs and aliases",
     (model) => {
       const error = rejection({ model });
 
       expect(error).toContain(`"${model}"`);
       expect(error).toContain("claude-haiku-4-5");
       expect(error).toContain("claude-opus-5-5");
+      expect(error).toContain("an alias (opus, sonnet, haiku)");
     },
   );
 
@@ -59,10 +74,18 @@ describe("buildConfig", () => {
   );
 
   it("rejects any temperature for a model that does not accept one, naming those that do", () => {
-    const error = rejection({ model: "claude-haiku-5-5", temperature: "0" });
+    const error = rejection({ model: "haiku", temperature: "0" });
 
     expect(error).toContain("claude-haiku-5-5 does not accept --temperature");
-    expect(error).toContain("claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5");
+    expect(error).toContain(
+      "pass --model with one of: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5.",
+    );
+  });
+
+  it("rejects a temperature for the default model, which does not accept one", () => {
+    expect(rejection({ temperature: "0.7" })).toContain(
+      "claude-sonnet-5-5 does not accept --temperature",
+    );
   });
 
   it.each(["0", "10"])("accepts --max-retries %s", (maxRetries) => {
@@ -73,6 +96,25 @@ describe("buildConfig", () => {
 
   it.each(["11", "-1", "1.5", "abc", ""])("rejects --max-retries %j", (maxRetries) => {
     expect(rejection({ model: "claude-opus-5-5", maxRetries })).toContain("--max-retries");
+  });
+});
+
+describe("checkTemperatureSupport", () => {
+  const accepting = { id: "claude-sonnet-4-6", acceptsTemperature: true };
+  const rejecting = { id: "claude-sonnet-5-5", acceptsTemperature: false };
+
+  it("allows any model when no temperature is set", () => {
+    expect(checkTemperatureSupport(rejecting, undefined)).toBeUndefined();
+  });
+
+  it("allows a temperature for a model that accepts one", () => {
+    expect(checkTemperatureSupport(accepting, 0)).toBeUndefined();
+  });
+
+  it("explains why a model that accepts no temperature cannot take one", () => {
+    expect(checkTemperatureSupport(rejecting, 1)).toContain(
+      "claude-sonnet-5-5 does not accept --temperature: models released after Claude Opus 4.6",
+    );
   });
 });
 

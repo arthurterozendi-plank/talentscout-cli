@@ -3,7 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { buildMessageParams, responseText, type MessagesClient } from "./client.js";
 import { buildConfig, DEFAULT_MAX_RETRIES, describeConfig } from "./config.js";
 import { describeFailure, describeRetry } from "./errors.js";
-import { MODELS } from "./models.js";
+import { DEFAULT_MODEL_ID, MODEL_ALIASES, MODELS, type ModelInfo } from "./models.js";
 import { withRetry } from "./retry.js";
 
 /**
@@ -22,24 +22,32 @@ export interface CliDeps {
   random: () => number;
 }
 
-const MODEL_LIST = MODELS.map(
-  (model) => `  ${model.id}${model.acceptsTemperature ? " *" : ""}`,
-).join("\n");
+function modelLine(model: ModelInfo): string {
+  const notes = [...MODEL_ALIASES]
+    .filter(([, id]) => id === model.id)
+    .map(([alias]) => `alias "${alias}"`);
+  if (model.id === DEFAULT_MODEL_ID) {
+    notes.push("default");
+  }
+  const name = `${model.id}${model.acceptsTemperature ? " *" : ""}`;
+  return notes.length === 0 ? `  ${name}` : `  ${name.padEnd(20)}${notes.join(", ")}`;
+}
 
-const USAGE = `Usage: talentscout-cli --model <id> [--temperature <0-1>] [--max-retries <n>] <prompt>
+const USAGE = `Usage: talentscout-cli [--model <model>] [--temperature <0-1>] [--max-retries <n>] <prompt>
 
 Sends <prompt> to Claude once and prints the reply. The API key is read from
 the ANTHROPIC_API_KEY environment variable.
 
 Options:
-  --model <id>          The model to ask (required). One of the models below.
+  --model <model>       A model ID or alias from the list below
+                        (default ${DEFAULT_MODEL_ID}).
   --temperature <0-1>   Sampling temperature. Omit it to use the model's default.
   --max-retries <n>     Retries on a 429, 5xx or dropped connection, with
                         exponential backoff (default ${DEFAULT_MAX_RETRIES}, at most 10).
   -h, --help            Show this help.
 
 Models (* accepts --temperature):
-${MODEL_LIST}
+${MODELS.map(modelLine).join("\n")}
 `;
 
 // A real key is a long random string. Masking a short placeholder such as "x"

@@ -1,4 +1,4 @@
-import { findModel, MODELS, type ModelInfo } from "./models.js";
+import { DEFAULT_MODEL_ID, findModel, MODEL_ALIASES, MODELS, type ModelInfo } from "./models.js";
 
 /** The settings every request in a run is sent with. */
 export interface ChatConfig {
@@ -37,13 +37,15 @@ const MAX_RETRIES_LIMIT = 10;
  * temperature never costs a request.
  */
 export function buildConfig(flags: ConfigFlags): ConfigResult {
-  if (flags.model === undefined) {
-    return { ok: false, error: "--model is required." };
-  }
-  const model = findModel(flags.model);
+  const name = flags.model ?? DEFAULT_MODEL_ID;
+  const model = findModel(name);
   if (model === undefined) {
-    const known = MODELS.map((candidate) => candidate.id).join(", ");
-    return { ok: false, error: `unknown model "${flags.model}". Choose one of: ${known}.` };
+    const ids = MODELS.map((candidate) => candidate.id).join(", ");
+    const aliases = [...MODEL_ALIASES.keys()].join(", ");
+    return {
+      ok: false,
+      error: `unknown model "${name}". Choose a model ID (${ids}) or an alias (${aliases}).`,
+    };
   }
 
   let temperature: number | undefined;
@@ -55,17 +57,10 @@ export function buildConfig(flags: ConfigFlags): ConfigResult {
         error: `--temperature must be a number from 0 to 1; got "${flags.temperature}".`,
       };
     }
-    if (!model.acceptsTemperature) {
-      const accepting = MODELS.filter((candidate) => candidate.acceptsTemperature)
-        .map((candidate) => candidate.id)
-        .join(", ");
-      return {
-        ok: false,
-        error:
-          `${model.id} does not accept --temperature: models released after Claude Opus 4.6 ` +
-          `reject any value but their default. Omit --temperature, or choose one of: ${accepting}.`,
-      };
-    }
+  }
+  const unsupported = checkTemperatureSupport(model, temperature);
+  if (unsupported !== undefined) {
+    return { ok: false, error: unsupported };
   }
 
   let maxRetries = DEFAULT_MAX_RETRIES;
@@ -80,6 +75,27 @@ export function buildConfig(flags: ConfigFlags): ConfigResult {
   }
 
   return { ok: true, config: { model, temperature, maxTokens: MAX_TOKENS, maxRetries } };
+}
+
+/**
+ * Why `model` cannot be sent `temperature`, or `undefined` when it can (an
+ * unset temperature always can). The one place this rule lives, so a check
+ * made at startup and one made after switching models cannot disagree.
+ */
+export function checkTemperatureSupport(
+  model: ModelInfo,
+  temperature: number | undefined,
+): string | undefined {
+  if (temperature === undefined || model.acceptsTemperature) {
+    return undefined;
+  }
+  const accepting = MODELS.filter((candidate) => candidate.acceptsTemperature)
+    .map((candidate) => candidate.id)
+    .join(", ");
+  return (
+    `${model.id} does not accept --temperature: models released after Claude Opus 4.6 reject ` +
+    `any value but their default. Omit --temperature, or pass --model with one of: ${accepting}.`
+  );
 }
 
 /**
