@@ -492,3 +492,53 @@ describe("a conversation, started by giving no prompt", () => {
     expect(cli.prompts()).toBe(1);
   });
 });
+
+describe("slash commands in a conversation", () => {
+  it("lists the in-conversation commands in --help", async () => {
+    const cli = harness([]);
+
+    await run(["--help"], cli.deps);
+
+    expect(cli.stdout()).toMatch(/^ {2}\/model <name> +switch model, keeping the conversation/m);
+  });
+
+  it("sends the next message to the model /model names, with the earlier turns", async () => {
+    const cli = harness([reply("Ask about on-call."), reply("Ask about incidents.")], {
+      lines: ["Suggest an interview question", "/model opus", "Another, please"],
+    });
+
+    await expect(run(["--model", "haiku"], cli.deps)).resolves.toBe(0);
+
+    expect(cli.requests.map((request) => request.model)).toEqual([
+      "claude-haiku-5-5",
+      "claude-opus-5-5",
+    ]);
+    expect(cli.requests[1]?.messages).toEqual([
+      { role: "user", content: "Suggest an interview question" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Ask about on-call.", citations: null }],
+      },
+      { role: "user", content: "Another, please" },
+    ]);
+    expect(cli.stderr()).toContain(
+      "talentscout-cli: switched from claude-haiku-5-5 to claude-opus-5-5, keeping the conversation so far.\n" +
+        "model=claude-opus-5-5 temperature=default",
+    );
+    expect(cli.stdout()).toBe("Ask about on-call.\nAsk about incidents.\n");
+  });
+
+  it("does not fail the conversation for a command, a mistyped one, or a model it does not know", async () => {
+    const cli = harness([reply("Hi")], {
+      lines: ["/foo", "/model gpt-5", "/model opus", "Hello"],
+    });
+
+    await expect(run([], cli.deps)).resolves.toBe(0);
+
+    expect(cli.requests).toHaveLength(1);
+    expect(cli.requests[0]?.model).toBe("claude-opus-5-5");
+    expect(cli.stderr()).toContain('unknown command "/foo"; nothing was sent. Commands:\n');
+    expect(cli.stderr()).toContain('unknown model "gpt-5"; still using claude-sonnet-5-5.');
+    expect(cli.stderr()).not.toContain("left out of the conversation");
+  });
+});

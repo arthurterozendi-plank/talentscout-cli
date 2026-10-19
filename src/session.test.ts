@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { COMMANDS, describeCommands } from "./commands.js";
 import type { ChatConfig } from "./config.js";
 import {
   apiError,
@@ -14,8 +15,7 @@ import {
   thinkingBlock,
   type ScriptedReply,
 } from "./fake-client.js";
-import { createSession, handleInput, sendMessage } from "./session.js";
-import type { TurnIo } from "./turn.js";
+import { createSession, handleInput, sendMessage, type InputIo } from "./session.js";
 
 const haiku: ChatConfig = {
   model: { id: "claude-haiku-4-5", acceptsTemperature: true },
@@ -30,15 +30,23 @@ function setup(replies: ScriptedReply[]) {
   const fake = fakeClient(replies);
   const interrupt = new AbortController();
   const writes: string[] = [];
-  const io: TurnIo = {
+  const notices: string[] = [];
+  const io: InputIo = {
     client: fake.client,
     write: (text) => writes.push(text),
     signal: interrupt.signal,
     sleep: async () => {},
     random: () => 0.5,
     onRetry: () => {},
+    notice: (text) => notices.push(text),
   };
-  return { io, interrupt, requests: fake.requests, written: () => writes.join("") };
+  return {
+    io,
+    interrupt,
+    requests: fake.requests,
+    notices,
+    written: () => writes.join(""),
+  };
 }
 
 describe("sendMessage", () => {
@@ -169,5 +177,122 @@ describe("handleInput", () => {
     await handleInput(createSession(haiku), "  Hello  \t", chat.io);
 
     expect(chat.requests[0]?.messages).toEqual([{ role: "user", content: "Hello" }]);
+  });
+});
+
+describe("handleInput: /model", () => {
+  it("switches the model the next request goes to, sending the history unchanged", async () => {
+    const chat = setup([
+      [
+        messageStart({}, "claude-haiku-4-5"),
+        ...thinkingBlock(0, "sig-haiku"),
+        textStart(1),
+        textDelta("Ask about on-call.", 1),
+        blockStop(1),
+        messageDelta(),
+        messageStop,
+      ],
+      reply("Ask about incidents."),
+    ]);
+    const session = createSession(haiku);
+    await handleInput(session, "One question, please", chat.io);
+    const history = structuredClone(session.history);
+
+    await expect(handleInput(session, "/model opus", chat.io)).resolves.toBeUndefined();
+    expect(chat.requests).toHaveLength(1);
+    await handleInput(session, "Another", chat.io);
+
+    expect(chat.requests[1]?.model).toBe("claude-opus-5-5");
+    expect(chat.requests[1]?.messages).toEqual([...history, { role: "user", content: "Another" }]);
+    expect(chat.notices.join("\n")).toContain(
+      "switched from claude-haiku-4-5 to claude-opus-5-5, keeping the conversation so far.",
+    );
+  });
+
+  it("keeps the current model, and says so, for a name it does not know", async () => {
+    const chat = setup([reply("Hi")]);
+    const session = createSession(haiku);
+
+    await handleInput(session, "/model gpt-5", chat.io);
+    await handleInput(session, "Hello", chat.io);
+
+    expect(session.config).toBe(haiku);
+    expect(chat.notices).toEqual([
+      expect.stringMatching(/^unknown model "gpt-5"; still using claude-haiku-4-5\. Choose /),
+    ]);
+    expect(chat.requests.map((request) => request.model)).toEqual(["claude-haiku-4-5"]);
+  });
+
+  it("keeps the current model when the new one would reject the conversation's temperature", async () => {
+    const chat = setup([reply("Hi")]);
+    const cold = { ...haiku, temperature: 0 };
+    const session = createSession(cold);
+
+    await handleInput(session, "/model sonnet", chat.io);
+    await handleInput(session, "Hello", chat.io);
+
+    expect(session.config).toBe(cold);
+    expect(chat.notices[0]).toContain(
+      "claude-sonnet-5-5 does not accept a temperature, and this conversation sends " +
+        "temperature=0; still using claude-haiku-4-5.",
+    );
+    expect(chat.requests[0]).toMatchObject({ model: "claude-haiku-4-5", temperature: 0 });
+  });
+
+  it("carries the temperature over to a model that accepts one", async () => {
+    const chat = setup([reply("Hi")]);
+    const session = createSession({ ...haiku, temperature: 0 });
+
+    await handleInput(session, "/model claude-sonnet-4-6", chat.io);
+    await handleInput(session, "Hello", chat.io);
+
+    expect(chat.requests[0]).toMatchObject({ model: "claude-sonnet-4-6", temperature: 0 });
+  });
+
+  it("names the current model and changes nothing when given no name", async () => {
+    const chat = setup([]);
+    const session = createSession(haiku);
+
+    await handleInput(session, "/model", chat.io);
+
+    expect(session.config).toBe(haiku);
+    expect(chat.notices).toEqual([
+      expect.stringMatching(/^the model is claude-haiku-4-5\. To switch, choose a model ID \(/),
+    ]);
+  });
+
+  it("says so when the name, or its alias, is the model already in use", async () => {
+    const chat = setup([]);
+    const session = createSession(opus);
+
+    await handleInput(session, "/model opus", chat.io);
+
+    expect(session.config).toBe(opus);
+    expect(chat.notices).toEqual(["already using claude-opus-5-5."]);
+  });
+});
+
+describe("handleInput: other slash commands", () => {
+  it("lists every command, and sends nothing, for one it does not know", async () => {
+    const chat = setup([reply("Hi")]);
+    const session = createSession(haiku);
+
+    await expect(handleInput(session, "/foo bar", chat.io)).resolves.toBeUndefined();
+
+    expect(chat.requests).toEqual([]);
+    expect(session.history).toEqual([]);
+    const [listing = ""] = chat.notices;
+    expect(listing).toMatch(/^unknown command "\/foo"; nothing was sent\. Commands:\n/);
+    for (const command of COMMANDS) {
+      expect(listing).toContain(`/${command.name} ${command.argument}`.trim());
+    }
+  });
+
+  it("lists every command, without calling it unknown, for a lone slash", async () => {
+    const chat = setup([]);
+
+    await handleInput(createSession(haiku), "/", chat.io);
+
+    expect(chat.notices).toEqual([`Commands:\n${describeCommands()}`]);
   });
 });

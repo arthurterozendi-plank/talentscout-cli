@@ -38,6 +38,7 @@ own `CLAUDE.md` — and a directory inside the monorepo sharing all three would 
 | `main.ts`        | The only module touching `process`; wires the real deps — stdin, SIGINT — into `run()`.          |
 | `cli.ts`         | `run(argv, deps)`: flags, the order of checks, one prompt or a conversation, exit codes.         |
 | `session.ts`     | `Session` (config and history), `handleInput` — where every typed line goes — and `sendMessage`. |
+| `commands.ts`    | The slash commands: `COMMANDS`, telling a command from a message, running one, the listing.      |
 | `turn.ts`        | `streamTurn`: one streamed request, its events handled one by one, and its `TurnOutcome`.        |
 | `line-input.ts`  | Typed lines and Ctrl-C through `node:readline`, from the streams `main.ts` passes in.            |
 | `models.ts`      | `MODELS` and which take a temperature, `MODEL_ALIASES`, `DEFAULT_MODEL_ID`.                      |
@@ -90,6 +91,11 @@ The observable contract `run()` implements:
   conversation a failed or refused turn is explained, said to be left out, and the conversation
   goes on; when input ends (Ctrl-D, or the end of piped input) it exits `1` if any turn failed or
   was refused, and `0` only if every turn completed.
+- In a conversation, a line starting with `/` is a command and is never sent. `/model <name>`
+  switches model for the turns after it and keeps the history; a name it does not know, or a model
+  that would reject the conversation's temperature, leaves the model as it was and says why. An
+  unknown command, or a lone `/`, lists the commands. Commands answer on stderr. A command is not a
+  turn: it never joins the history and never affects the exit code.
 - Ctrl-C, mid-reply or at the prompt: any partial line is ended, exit `130`.
 - Never a stack trace. `run()` turns every SDK error into a sentence (`errors.ts`); `main.ts`
   catches anything else with a generic message.
@@ -135,6 +141,21 @@ The observable contract `run()` implements:
   a turn, so the exit code is the only signal a script gets: `cat prompts.txt | talentscout-cli`
   must be able to tell that some input got no usable answer. A reply cut off at `max_tokens` still
   counts as completed, as it does for a one-shot prompt.
+- **A slash command is one entry in `COMMANDS`.** Its name, argument, summary and handler are all
+  a command needs: the unknown-command listing and `--help` are generated from the list, and the
+  handler gets the `Session`, so it can read the history or replace `session.config`. Commands are
+  told apart in `handleInput` and resolve `undefined` like a blank line, so they stay off the path
+  that counts a turn as kept or unanswered.
+- **`/model` keeps the whole history, thinking blocks included, and strips nothing.** A model
+  switch is not an edit under the preserved-thinking check — the request's `model` field is not
+  part of the conversation a thinking block's signature binds — and when the new model cannot read an earlier model's
+  thinking block, the API drops that block from the request without an error and without billing
+  it. Stripping blocks ourselves would lose them for good on a switch back, and removing them from
+  the middle of a history is itself an edit that can fail the request.
+- **`/model` refuses a model that would reject the conversation's temperature.** It applies
+  `checkTemperatureSupport`, the rule `--temperature` is checked against at startup, so a switch
+  can never produce a request that 400s. It refuses rather than dropping the temperature, because
+  an engineer comparing answers would otherwise be comparing two settings changed at once.
 - **`max_tokens` is 32,000 for every model.** It is a ceiling, not a target — only generated
   tokens are billed. Requests stream, so the SDK's size limit on non-streaming requests no longer
   applies; 32,000 leaves room for the thinking later models always do, which counts against it,

@@ -1,10 +1,18 @@
 import { parseArgs } from "node:util";
 import type { MessagesClient } from "./client.js";
+import { describeCommands } from "./commands.js";
 import { buildConfig, DEFAULT_MAX_RETRIES, describeConfig } from "./config.js";
 import { describeFailure, describeRetry } from "./errors.js";
 import { DEFAULT_MODEL_ID, MODEL_ALIASES, MODELS, type ModelInfo } from "./models.js";
-import { createSession, handleInput, isKept, sendMessage, type Session } from "./session.js";
-import type { TurnIo, TurnOutcome } from "./turn.js";
+import {
+  createSession,
+  handleInput,
+  isKept,
+  sendMessage,
+  type InputIo,
+  type Session,
+} from "./session.js";
+import type { TurnOutcome } from "./turn.js";
 
 /**
  * Everything `run` needs from the outside world. `main.ts` supplies the real
@@ -65,6 +73,9 @@ Options:
 
 Models (* accepts --temperature):
 ${MODELS.map(modelLine).join("\n")}
+
+In a conversation, a line starting with / is a command, never sent to Claude:
+${describeCommands()}
 `;
 
 // A real key is a long random string. Masking a short placeholder such as "x"
@@ -100,14 +111,18 @@ function report(outcome: TurnOutcome, session: Session, stderr: (text: string) =
  * Reads and sends lines until input ends. Exits `1` if any turn went
  * unanswered — failed or refused — so `cat prompts.txt | talentscout-cli` can
  * tell that some input got no usable reply; `0` only when every turn completed.
+ * A command, known or not, is not a turn and never affects the exit code.
  */
 async function converse(
   session: Session,
-  io: TurnIo,
+  io: InputIo,
   readLine: CliDeps["readLine"],
   stderr: (text: string) => void,
 ): Promise<number> {
-  stderr("Type a message and press Enter. Ctrl-D or Ctrl-C ends the conversation.");
+  stderr(
+    "Type a message and press Enter, or a / command (/ alone lists them). " +
+      "Ctrl-D or Ctrl-C ends the conversation.",
+  );
   let unanswered = false;
   for (;;) {
     const line = await readLine(PROMPT);
@@ -189,13 +204,14 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
   stderr(describeConfig(result.config));
 
   const session = createSession(result.config);
-  const io: TurnIo = {
+  const io: InputIo = {
     client: deps.createClient(apiKey),
     write: stdout,
     signal: deps.interrupt,
     sleep: deps.sleep,
     random: deps.random,
     onRetry: (event) => stderr(describeRetry(event)),
+    notice: stderr,
   };
 
   if (positionals.length === 0) {

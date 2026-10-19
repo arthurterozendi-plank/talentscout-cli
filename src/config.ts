@@ -1,4 +1,10 @@
-import { DEFAULT_MODEL_ID, findModel, MODEL_ALIASES, MODELS, type ModelInfo } from "./models.js";
+import {
+  DEFAULT_MODEL_ID,
+  describeModelChoices,
+  findModel,
+  MODELS,
+  type ModelInfo,
+} from "./models.js";
 
 /** The settings every request in a run is sent with. */
 export interface ChatConfig {
@@ -41,12 +47,7 @@ export function buildConfig(flags: ConfigFlags): ConfigResult {
   const name = flags.model ?? DEFAULT_MODEL_ID;
   const model = findModel(name);
   if (model === undefined) {
-    const ids = MODELS.map((candidate) => candidate.id).join(", ");
-    const aliases = [...MODEL_ALIASES.keys()].join(", ");
-    return {
-      ok: false,
-      error: `unknown model "${name}". Choose a model ID (${ids}) or an alias (${aliases}).`,
-    };
+    return { ok: false, error: `unknown model "${name}". Choose ${describeModelChoices()}.` };
   }
 
   let temperature: number | undefined;
