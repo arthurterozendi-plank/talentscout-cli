@@ -2,12 +2,12 @@
 
 ## What this repo is
 
-This is the Day 6 CLI chatbot and Day 7 tool sandbox for **TalentScout**, the AI recruiting
-copilot built across the training programme. It is a sibling of `ai-eng-training` — the monorepo
-that hosts the web app — not a workspace inside it: this repo shares no code with `ai-eng-training`
-and inherits none of its rules. Its own `CLAUDE.md` (this file) is the complete set of conventions
-for working here; do not assume anything from the monorepo's `CLAUDE.md` applies unless it is
-restated below.
+This is the Day 6 CLI chatbot and prompting benchmark, and the Day 7 tool sandbox, for
+**TalentScout**, the AI recruiting copilot built across the training programme. It is a sibling of
+`ai-eng-training` — the monorepo that hosts the web app — not a workspace inside it: this repo
+shares no code with `ai-eng-training` and inherits none of its rules. Its own `CLAUDE.md` (this
+file) is the complete set of conventions for working here; do not assume anything from the
+monorepo's `CLAUDE.md` applies unless it is restated below.
 
 The separation is deliberate, not incidental: Day 4 of the programme practises switching between
 two genuinely different codebases — different lockfile, different lint and TypeScript rules, its
@@ -17,42 +17,58 @@ own `CLAUDE.md` — and a directory inside the monorepo sharing all three would 
 
 - Node `>=22`, pnpm `11.5.0` (see `pnpm-workspace.yaml` for why a workspace file exists in a
   single-package repo).
-- `tsx` runs `src/main.ts` directly; there is no build step and no `bin` field yet — see
-  `package.json`'s `cli` script.
+- `tsx` runs `src/main.ts` and `src/benchmark/main.ts` directly; there is no build step and no
+  `bin` field yet — see `package.json`'s `cli` and `benchmark` scripts.
 - TypeScript 5.9, `strict`, `moduleResolution: "nodenext"`.
 - ESLint 9 with `typescript-eslint` 8's recommended rules, `eslint-config-prettier` last.
-- Vitest 4, default `node` environment (no config file needed).
+- Vitest 4, default `node` environment. `vitest.config.ts` exists only to resolve the `@/` alias.
 - Prettier 3, with `@ianvs/prettier-plugin-sort-imports` and no Tailwind plugin — this repo has no
   Tailwind.
-- `@anthropic-ai/sdk` is the only runtime dependency. Tests never call the API: `run()` takes its
-  client as a dependency and the tests hand it the fake in `fake-client.ts`, whose replies are the
-  SDK's own `MessageStream` fed from scripted events. How a reply is assembled, how stream errors
-  surface and what an abort does are therefore the SDK's real behaviour, not a re-imagining of it.
+- `@anthropic-ai/sdk` is the only runtime dependency. Tests never call the API: `run()` and
+  `runBenchmark()` take their client as a dependency and the tests hand them the fake in
+  `fake-client.ts`, whose replies are the SDK's own `MessageStream` fed from scripted events. How a
+  reply is assembled, how stream errors surface and what an abort does are therefore the SDK's real
+  behaviour, not a re-imagining of it.
 
 ## Layout and the import rule
 
-`src/` is flat, one module per concern, each with its test beside it:
+`src/` holds the CLI, one module per concern, each with its test beside it:
 
 | Module           | Owns                                                                                             |
 | ---------------- | ------------------------------------------------------------------------------------------------ |
-| `main.ts`        | The only module touching `process`; wires the real deps — stdin, SIGINT — into `run()`.          |
+| `main.ts`        | The only CLI module touching `process`; wires the real deps — stdin, SIGINT — into `run()`.      |
 | `cli.ts`         | `run(argv, deps)`: flags, the order of checks, one prompt or a conversation, exit codes.         |
 | `session.ts`     | `Session` (config and history), `handleInput` — where every typed line goes — and `sendMessage`. |
 | `turn.ts`        | `streamTurn`: one streamed request, its events handled one by one, and its `TurnOutcome`.        |
 | `line-input.ts`  | Typed lines and Ctrl-C through `node:readline`, from the streams `main.ts` passes in.            |
-| `models.ts`      | `MODELS` and which take a temperature, `MODEL_ALIASES`, `DEFAULT_MODEL_ID`.                      |
+| `models.ts`      | `MODELS`, which take a temperature and what each costs; `costUsd`; the aliases.                  |
 | `config.ts`      | `buildConfig`, `checkTemperatureSupport`, and the startup echo.                                  |
 | `client.ts`      | SDK client construction, `ReplyStream`, and the one place a config becomes request params.       |
 | `retry.ts`       | `withRetry`: which errors are retried and how long to wait between attempts.                     |
 | `errors.ts`      | The human-readable text for every way a request can fail or be retried.                          |
 | `fake-client.ts` | Test support only, with no test of its own: the scripted `MessagesClient` the tests run against. |
 
-There is no `@/` alias — with no subdirectories, a relative import cannot cross one, so the alias
-has nothing to earn its keep against yet. Add it the moment a second directory under `src/`
-exists.
+`src/benchmark/` holds the resume-scoring benchmark (AI-52), a separate program built on the same
+modules; `benchmarks/resume-scoring/README.md` is its write-up and `results/` beside it its output:
 
-**Relative imports must carry a `.js` extension**, e.g. `import { run } from "./cli.js"`, even
-though the source file is `cli.ts`. Under `moduleResolution: "nodenext"`, an extensionless
+| Module        | Owns                                                                             |
+| ------------- | -------------------------------------------------------------------------------- |
+| `main.ts`     | The only benchmark module touching `process` or the file system.                 |
+| `command.ts`  | `runBenchmark(argv, deps)`: flags, the key check, the run loop, writing results. |
+| `fixtures.ts` | The resumes and job descriptions, as `CASES`.                                    |
+| `prompts.ts`  | The system prompt, each technique's user message, and `parseScore`.              |
+| `grid.ts`     | Which models run at which temperatures, expanded into every cell.                |
+| `run.ts`      | One request: building it, sending it with retries, recording its outcome.        |
+| `report.ts`   | The comparison table, the report around it, and the cost ceiling.                |
+| `dry-run.ts`  | The fake client `--dry-run` uses.                                                |
+
+**`@/*` maps to `src/*`.** An import that crosses a directory uses it — `@/models.js` from
+`src/benchmark/` — and one within a directory stays relative. `tsconfig.json`'s `paths` declares
+it; `tsx` reads that directly and Vitest through `resolve.tsconfigPaths`. Prettier sorts `@/`
+imports after packages and before relative ones.
+
+**Imports must carry a `.js` extension**, e.g. `import { run } from "./cli.js"`, even though the
+source file is `cli.ts` — `@/` imports too. Under `moduleResolution: "nodenext"`, an extensionless
 specifier fails `tsc --noEmit` with `TS2835` — it still runs fine under `tsx`, which is what makes
 this easy to miss: the code works locally and only `pnpm check` catches it.
 
@@ -70,6 +86,11 @@ Ctrl-C — without a subprocess, a network call, a terminal, or a real clock.
 `run` writes as it goes rather than returning its output: the settings are echoed before the
 request is sent, each retry is announced while the CLI waits, and a reply's text is written piece by
 piece as it streams in.
+
+The benchmark follows the same pattern: `runBenchmark(argv, deps)` in `src/benchmark/command.ts`
+reaches the outside world only through `BenchmarkDeps`, which adds the two clocks (monotonic for
+latency, wall for file names) and the two file writers to the CLI's set, and
+`src/benchmark/main.ts` alone supplies the real ones.
 
 The observable contract `run()` implements:
 
@@ -139,9 +160,19 @@ The observable contract `run()` implements:
   tokens are billed. Requests stream, so the SDK's size limit on non-streaming requests no longer
   applies; 32,000 leaves room for the thinking later models always do, which counts against it,
   while still capping what a runaway reply can cost.
+- **Prices are data on each `ModelInfo`, and `costUsd` is the only place tokens become dollars.**
+  A cost is always computed from a response's `usage` — uncached input, cache reads, each
+  cache-write TTL and output at their own rates — never estimated, so the benchmark and any later
+  cost display cannot disagree. The prices are copied from Anthropic's pricing page with the date
+  in `ModelInfo.pricing`'s JSDoc; `models.test.ts` checks every rate card against the published
+  cache multipliers, so a mistyped price fails `pnpm check`.
+- **The benchmark is a package script beside the CLI, not a CLI flag.** Its grid is fixed in code
+  and it runs once per question, so it has no business in `cli.ts`'s contract. It reuses the CLI's
+  request shape (`buildMessageParams`), temperature rule (`checkTemperatureSupport`), retries and
+  error text, so a request it sends is one the CLI would send.
 
 ## Verification
 
 Run `pnpm check` — typecheck, lint, test, then a Prettier format check — before handing work back.
-It also covers this file and `README.md`: Prettier's `.prettierignore` here only excludes
-`pnpm-lock.yaml`, so hand-wrapped markdown is checked too.
+It also covers this file and the other Markdown: `.prettierignore` excludes only `pnpm-lock.yaml`
+and the benchmark's generated `results/`, so hand-wrapped markdown is checked too.
