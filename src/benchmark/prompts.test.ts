@@ -64,8 +64,8 @@ describe("parseScore", () => {
     ["the lowest score", "<score>0", 0],
     ["the highest score", "<score>100", 100],
     [
-      "an analysis that mentions a tag before the final score",
-      "<analysis>Not a <score>10</score> case.</analysis>\n<score>64",
+      "the score after a closed analysis",
+      "<analysis>Must-haves: all met.</analysis>\n<score>64",
       64,
     ],
   ])("reads %s", (_, text, expected) => {
@@ -81,6 +81,9 @@ describe("parseScore", () => {
     ["a score above 100", "<score>101"],
     ["a negative score", "<score>-5"],
     ["words instead of a number", "<score>high</score>"],
+    // What the API returns when the model writes a score tag mid-analysis:
+    // the stop sequence ends the reply there.
+    ["a score inside an unfinished analysis", "<analysis>Not a <score>10"],
   ])("rejects %s as malformed", (_, text) => {
     expect(parseScore(text)).toBeUndefined();
   });

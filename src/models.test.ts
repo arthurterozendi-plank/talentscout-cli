@@ -54,8 +54,11 @@ describe("the alias table and the default", () => {
 });
 
 describe("pricing", () => {
-  // The pricing page states these rules for every rate card; checking the
-  // table against them catches a mistyped price.
+  // The pricing page states the cache rules for every rate card, and on
+  // 2026-10-19 every card's output price was five times its input price.
+  // Checking the table against both catches a mistyped price; a new model that
+  // breaks the output ratio has to be checked against the page and the ratio
+  // dropped here.
   const cacheReadMultiplier: Record<string, number> = {
     "claude-fable-5-1": 0.025,
     "claude-opus-5-5": 0.05,
@@ -63,10 +66,11 @@ describe("pricing", () => {
   };
 
   it.each(MODELS.map((candidate) => [candidate.id, candidate] as const))(
-    "%s follows the published cache multipliers",
+    "%s follows the published price ratios",
     (id, candidate) => {
       const cards = [candidate.pricing, candidate.pricing.longPrompt].filter((card) => !!card);
       for (const card of cards) {
+        expect(card.output).toBeCloseTo(card.input * 5, 10);
         expect(card.cacheWrite5m).toBeCloseTo(card.input * 1.25, 10);
         expect(card.cacheWrite1h).toBeCloseTo(card.input * 2, 10);
         expect(card.cacheRead).toBeCloseTo(card.input * (cacheReadMultiplier[id] ?? 0.1), 10);
@@ -100,6 +104,19 @@ describe("costUsd", () => {
     );
 
     expect(cost).toBeCloseTo(0.004 + 0.002 + 0.002 + 0.01 + 0.008, 10);
+  });
+
+  it("prices cache writes from the TTL breakdown when the total is missing", () => {
+    // claude-haiku-4-5: $1.25 per million 5-minute writes, $2 per million 1-hour writes.
+    const cost = costUsd(
+      model("claude-haiku-4-5"),
+      usage({
+        cache_creation_input_tokens: null,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1_000_000 },
+      }),
+    );
+
+    expect(cost).toBeCloseTo(2, 10);
   });
 
   it("prices cache writes without a TTL breakdown at the 5-minute rate", () => {
