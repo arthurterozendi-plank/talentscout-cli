@@ -42,6 +42,7 @@ export function buildMessageParams(
     model: config.model.id,
     max_tokens: config.maxTokens,
     messages,
+    ...(config.system === undefined ? {} : { system: config.system }),
     // The SDK marks `temperature` deprecated because later models reject it;
     // `buildConfig` only lets it through for a model that still accepts it.
     ...(config.temperature === undefined ? {} : { temperature: config.temperature }),

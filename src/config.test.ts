@@ -24,6 +24,7 @@ describe("buildConfig", () => {
       config: {
         model: { id: "claude-haiku-4-5", acceptsTemperature: true },
         temperature: 0,
+        system: undefined,
         maxTokens: MAX_TOKENS,
         maxRetries: DEFAULT_MAX_RETRIES,
       },

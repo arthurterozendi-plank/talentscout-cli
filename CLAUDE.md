@@ -38,6 +38,7 @@ own `CLAUDE.md` — and a directory inside the monorepo sharing all three would 
 | `main.ts`        | The only module touching `process`; wires the real deps — stdin, SIGINT — into `run()`.          |
 | `cli.ts`         | `run(argv, deps)`: flags, the order of checks, one prompt or a conversation, exit codes.         |
 | `session.ts`     | `Session` (config and history), `handleInput` — where every typed line goes — and `sendMessage`. |
+| `commands.ts`    | The slash commands: `COMMANDS`, telling a command from a message, running one, the listing.      |
 | `turn.ts`        | `streamTurn`: one streamed request, its events handled one by one, and its `TurnOutcome`.        |
 | `line-input.ts`  | Typed lines and Ctrl-C through `node:readline`, from the streams `main.ts` passes in.            |
 | `models.ts`      | `MODELS` and which take a temperature, `MODEL_ALIASES`, `DEFAULT_MODEL_ID`.                      |
@@ -90,6 +91,14 @@ The observable contract `run()` implements:
   conversation a failed or refused turn is explained, said to be left out, and the conversation
   goes on; when input ends (Ctrl-D, or the end of piped input) it exits `1` if any turn failed or
   was refused, and `0` only if every turn completed.
+- No system prompt is sent until `/system` sets one; there is no flag for it.
+- In a conversation, a line starting with `/` is a command and is never sent. `/model <name>`
+  switches model for the turns after it and keeps the history; a name it does not know, or a model
+  that would reject the conversation's temperature, leaves the model as it was and says why.
+  `/system <prompt>` replaces the system prompt for the turns after it, removes every thinking
+  block from the history, and shows the old prompt and the new; `/system` alone shows the prompt,
+  or `none`. An unknown command, or a lone `/`, lists the commands. Commands answer on stderr. A
+  command is not a turn: it never joins the history and never affects the exit code.
 - Ctrl-C, mid-reply or at the prompt: any partial line is ended, exit `130`.
 - Never a stack trace. `run()` turns every SDK error into a sentence (`errors.ts`); `main.ts`
   catches anything else with a generic message.
@@ -111,7 +120,8 @@ The observable contract `run()` implements:
   half-written reply — which can end inside an unsigned thinking block — is ever sent back. The
   history is append-only, which the preserved-thinking check on current models requires, and keeps
   every content block the API returned, thinking blocks included: the API expects them back
-  unchanged and itself drops any that the next request's model cannot read.
+  unchanged and itself drops any that the next request's model cannot read. `/system` is the one
+  deliberate exception, below.
 - **Ctrl-C ends the CLI, mid-reply or at the prompt, with exit `130`.** The key means the same
   wherever it is pressed, and `130` is what shells report for an interrupt, so a script can tell it
   from a failure. In a terminal, readline reads keys raw, so Ctrl-C reaches `line-input.ts` as a
@@ -135,6 +145,35 @@ The observable contract `run()` implements:
   a turn, so the exit code is the only signal a script gets: `cat prompts.txt | talentscout-cli`
   must be able to tell that some input got no usable answer. A reply cut off at `max_tokens` still
   counts as completed, as it does for a one-shot prompt.
+- **A slash command is one entry in `COMMANDS`.** Its name, argument, summary and handler are all
+  a command needs: the unknown-command listing and `--help` are generated from the list, and the
+  handler gets the `Session`, so it can read the history or replace `session.config`. Commands are
+  told apart in `handleInput` and resolve `undefined` like a blank line, so they stay off the path
+  that counts a turn as kept or unanswered.
+- **`/model` keeps the whole history, thinking blocks included, and strips nothing.** A model
+  switch is not an edit under the preserved-thinking check — the request's `model` field is not
+  part of the conversation a thinking block's signature binds — and when the new model cannot read
+  an earlier model's thinking block, the API drops that block from the request without an error and
+  without billing it. Stripping blocks ourselves would lose them for good on a switch back, and
+  removing them from the middle of a history is itself an edit that can fail the request.
+- **`/system` replaces the top-level system prompt and removes every thinking block from the
+  history — the one exception to the append-only history.** A thinking block's signature binds the
+  `system` prompt it was written under: per
+  <https://platform.claude.com/docs/en/build-with-claude/preserved-thinking>, "Change the top-level
+  `system` string or blocks | Invalid", and on Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5
+  the API answers a replayed block with a 400 by default for accounts created on or after
+  2026-08-31 — the default `claude-sonnet-5-5` thinks unless told not to. Removing every
+  `thinking` and `redacted_thinking` block once is the recovery the API documents; an exchange
+  whose reply is left empty is removed whole, since an empty assistant turn is rejected too and
+  dropping the pair keeps roles alternating. The alternative, an appended `role: "system"` message,
+  keeps the reasoning but is rejected by five of the models in `MODELS` — all three that take a
+  temperature among them — and adds to the earlier prompt rather than replacing it, so models would
+  be compared under different effective prompts. Setting the prompt already in effect strips
+  nothing.
+- **`/model` refuses a model that would reject the conversation's temperature.** It applies
+  `checkTemperatureSupport`, the rule `--temperature` is checked against at startup, so a switch
+  can never produce a request that 400s. It refuses rather than dropping the temperature, because
+  an engineer comparing answers would otherwise be comparing two settings changed at once.
 - **`max_tokens` is 32,000 for every model.** It is a ceiling, not a target — only generated
   tokens are billed. Requests stream, so the SDK's size limit on non-streaming requests no longer
   applies; 32,000 leaves room for the thinking later models always do, which counts against it,

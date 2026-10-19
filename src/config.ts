@@ -1,10 +1,21 @@
-import { DEFAULT_MODEL_ID, findModel, MODEL_ALIASES, MODELS, type ModelInfo } from "./models.js";
+import {
+  DEFAULT_MODEL_ID,
+  describeModelChoices,
+  findModel,
+  MODELS,
+  type ModelInfo,
+} from "./models.js";
 
 /** The settings every request in a run is sent with. */
 export interface ChatConfig {
   readonly model: ModelInfo;
   /** `undefined` leaves the parameter out, so the model uses its own default. */
   readonly temperature: number | undefined;
+  /**
+   * The top-level system prompt. `undefined` sends none, which is how every
+   * run starts: only `/system` sets one.
+   */
+  readonly system: string | undefined;
   readonly maxTokens: number;
   readonly maxRetries: number;
 }
@@ -41,12 +52,7 @@ export function buildConfig(flags: ConfigFlags): ConfigResult {
   const name = flags.model ?? DEFAULT_MODEL_ID;
   const model = findModel(name);
   if (model === undefined) {
-    const ids = MODELS.map((candidate) => candidate.id).join(", ");
-    const aliases = [...MODEL_ALIASES.keys()].join(", ");
-    return {
-      ok: false,
-      error: `unknown model "${name}". Choose a model ID (${ids}) or an alias (${aliases}).`,
-    };
+    return { ok: false, error: `unknown model "${name}". Choose ${describeModelChoices()}.` };
   }
 
   let temperature: number | undefined;
@@ -75,7 +81,10 @@ export function buildConfig(flags: ConfigFlags): ConfigResult {
     }
   }
 
-  return { ok: true, config: { model, temperature, maxTokens: MAX_TOKENS, maxRetries } };
+  return {
+    ok: true,
+    config: { model, temperature, system: undefined, maxTokens: MAX_TOKENS, maxRetries },
+  };
 }
 
 /**

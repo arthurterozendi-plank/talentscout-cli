@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import { parseCommand, runCommand } from "./commands.js";
 import type { ChatConfig } from "./config.js";
 import { streamTurn, type TurnIo, type TurnOutcome } from "./turn.js";
 
@@ -14,6 +15,8 @@ export interface Session {
    * Completed exchanges only, oldest first: each user message followed by the
    * assistant reply to it, with every content block the API returned —
    * thinking blocks included, since the API expects those sent back unchanged.
+   * Append-only, with one exception: `/system` removes every thinking block,
+   * which a new system prompt would otherwise make the API reject.
    */
   readonly history: Anthropic.MessageParam[];
 }
@@ -51,19 +54,31 @@ export async function sendMessage(
   return outcome;
 }
 
+/** What {@link handleInput} needs: what a turn needs, and where a command answers. */
+export interface InputIo extends TurnIo {
+  /** Receives a command's answer: a note about the conversation, never a reply. */
+  notice: (text: string) => void;
+}
+
 /**
- * The one place a line typed in a conversation is acted on. Today every line
- * that is not blank is a message for Claude; a line that should mean something
- * else — a command — is told apart here, before anything is sent. Resolves the
- * outcome of the request the line sent, or `undefined` when it sent none.
+ * The one place a line typed in a conversation is acted on. A line starting
+ * with `/` is a command, run here and never sent; any other line that is not
+ * blank is a message for Claude. Resolves the outcome of the request the line
+ * sent, or `undefined` when it sent none — a blank line or a command, known or
+ * not — so only a real turn can count as answered or unanswered.
  */
 export async function handleInput(
   session: Session,
   line: string,
-  io: TurnIo,
+  io: InputIo,
 ): Promise<TurnOutcome | undefined> {
   const text = line.trim();
   if (text === "") {
+    return undefined;
+  }
+  const command = parseCommand(text);
+  if (command !== undefined) {
+    runCommand(command, { session, notice: io.notice });
     return undefined;
   }
   return sendMessage(session, text, io);

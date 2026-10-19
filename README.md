@@ -34,6 +34,41 @@ exit.
 | `--temperature <0-1>` | Optional. Omitted means the model's default.                                         |
 | `--max-retries <n>`   | Optional, default `4`, at most `10`. Retries after a 429, 5xx or dropped connection. |
 
+### Commands in a conversation
+
+A line starting with `/` is a command for the CLI and is never sent to Claude. Commands answer on
+stderr, beside the settings, and `--help` lists them too.
+
+| Command          | Effect                                                                                   |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| `/model <name>`  | Sends the turns after it to another model — an ID or an alias — with the history so far. |
+| `/system <text>` | Replaces the system prompt for the turns after it. `/system` alone shows the prompt.     |
+
+**`/model` changes the model without restarting, so the same question can be put to two models in
+one conversation.** The history goes to the new model as it is; nothing is stripped. Not every
+model can read the thinking another model wrote: where the new model cannot use an earlier reply's
+reasoning, the API leaves it out of the request, unbilled, and the model still sees every earlier
+message and reply. A name the CLI does not know leaves the model as it was and says so, as does a
+model that would reject the conversation's `--temperature`: the switch is refused rather than the
+temperature dropped, so a comparison never changes two settings at once. `/model` alone names the
+model in use.
+
+**The CLI sends no system prompt until `/system` sets one.** `/system <text>` replaces it — it does
+not add to the earlier one — and shows the old prompt and the new. Earlier replies stay in the
+conversation, but the reasoning behind them is dropped. A model's thinking is bound to the system
+prompt it was written under ("Change the top-level `system` string or blocks | Invalid", in
+Anthropic's
+[preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)
+docs): on Claude Fable 5.1 and the 5.5 Opus, Sonnet and Haiku models, the API answers thinking sent
+back under a different prompt with a 400, by default for accounts created on or after 2026-08-31.
+Removing it once is the recovery those docs give. A reply that was nothing but reasoning leaves the
+conversation together with the message it answered, and the confirmation says how many did.
+Setting the prompt already in effect changes nothing. This is the one time the CLI changes the
+history it keeps; everywhere else it only appends.
+
+**An unknown command lists the commands instead of being sent.** So does a lone `/`. Nothing is
+added to the conversation, and a command — known or not — never makes the CLI exit `1`.
+
 ### Models, aliases and temperature
 
 **Only `claude-opus-4-6`, `claude-sonnet-4-6` and `claude-haiku-4-5` accept `--temperature`.**

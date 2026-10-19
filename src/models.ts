@@ -52,3 +52,14 @@ export function findModel(name: string): ModelInfo | undefined {
   const id = MODEL_ALIASES.get(name) ?? name;
   return MODELS.find((model) => model.id === id);
 }
+
+/**
+ * Every name a model can be chosen by, worded to follow "Choose": the model
+ * IDs, then the aliases. `--model` and `/model` both use it, so the two offer
+ * the same choices in the same words.
+ */
+export function describeModelChoices(): string {
+  const ids = MODELS.map((model) => model.id).join(", ");
+  const aliases = [...MODEL_ALIASES.keys()].join(", ");
+  return `a model ID (${ids}) or an alias (${aliases})`;
+}
