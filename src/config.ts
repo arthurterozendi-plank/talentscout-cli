@@ -21,8 +21,7 @@ export type ConfigResult = { ok: true; config: ChatConfig } | { ok: false; error
 
 /**
  * A ceiling, not a target: only generated tokens are billed. It leaves room
- * for the thinking that later models always do, which counts against it, and
- * stays below the size at which the SDK insists on streaming.
+ * for the thinking that later models always do, which counts against it.
  */
 export const MAX_TOKENS = 16_000;
 

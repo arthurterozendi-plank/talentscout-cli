@@ -1,86 +1,56 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { describe, expect, it } from "vitest";
-import { run, type CliDeps } from "./cli.js";
+import { describe, expect, it, vi } from "vitest";
+import { EXIT_INTERRUPTED, PROMPT, run, type CliDeps } from "./cli.js";
+import {
+  apiError,
+  fakeClient,
+  LiveReply,
+  messageStart,
+  reply,
+  streamError,
+  textDelta,
+  textStart,
+  type ScriptedReply,
+} from "./fake-client.js";
 
 const API_KEY = "fake-key-for-tests-0123456789";
 
-function reply(text: string, stopReason: Anthropic.StopReason = "end_turn"): Anthropic.Message {
-  return {
-    id: "msg_test",
-    type: "message",
-    role: "assistant",
-    model: "claude-haiku-4-5",
-    content: [{ type: "text", text, citations: null }],
-    container: null,
-    diagnostics: null,
-    stop_details: null,
-    stop_reason: stopReason,
-    stop_sequence: null,
-    usage: {
-      cache_creation: null,
-      cache_creation_input_tokens: null,
-      cache_read_input_tokens: null,
-      inference_geo: null,
-      input_tokens: 10,
-      output_tokens: 5,
-      output_tokens_details: null,
-      server_tool_use: null,
-      service_tier: null,
-      speed: null,
-    },
-  };
-}
+type Event = { kind: "stdout" | "stderr" | "request" | "prompt"; text: string };
 
-function apiError(status: number, type: string, message = `${type} message`) {
-  return Anthropic.APIError.generate(
-    status,
-    { type: "error", error: { type, message } },
-    undefined,
-    new Headers(),
-  );
+interface HarnessOptions {
+  env?: Record<string, string | undefined>;
+  /** What the user types in a conversation, one entry per line; input ends after the last. */
+  lines?: string[];
 }
-
-type Event = { kind: "stdout" | "stderr" | "request"; text: string };
 
 /**
  * Fakes everything `run` touches. The fake client answers each request with
- * the next of `outcomes`, throwing it if it is an error.
+ * the next of `replies`; `readLine` hands out `lines` in order.
  */
-function harness(
-  outcomes: Array<Anthropic.Message | Error>,
-  env: Record<string, string | undefined> = { ANTHROPIC_API_KEY: API_KEY },
-) {
+function harness(replies: ScriptedReply[], options: HarnessOptions = {}) {
+  const env = options.env ?? { ANTHROPIC_API_KEY: API_KEY };
+  const lines = [...(options.lines ?? [])];
   const events: Event[] = [];
-  const requests: Anthropic.MessageCreateParamsNonStreaming[] = [];
   const sleeps: number[] = [];
   const clientKeys: string[] = [];
+  const interrupt = new AbortController();
+  const fake = fakeClient(replies, () => events.push({ kind: "request", text: "" }));
   const deps: CliDeps = {
     env,
     stdout: (text) => events.push({ kind: "stdout", text }),
     stderr: (text) => events.push({ kind: "stderr", text }),
     createClient: (apiKey) => {
       clientKeys.push(apiKey);
-      return {
-        messages: {
-          create: async (params) => {
-            requests.push(params);
-            events.push({ kind: "request", text: "" });
-            const outcome = outcomes.shift();
-            if (outcome === undefined) {
-              throw new Error("the fake client has no more outcomes");
-            }
-            if (outcome instanceof Error) {
-              throw outcome;
-            }
-            return outcome;
-          },
-        },
-      };
+      return fake.client;
     },
     sleep: async (ms) => {
       sleeps.push(ms);
     },
     random: () => 0.5,
+    readLine: async (prompt) => {
+      events.push({ kind: "prompt", text: prompt });
+      return lines.shift();
+    },
+    interrupt: interrupt.signal,
   };
   const output = (kind: Event["kind"]) =>
     events
@@ -90,26 +60,25 @@ function harness(
   return {
     deps,
     events,
-    requests,
+    interrupt,
+    requests: fake.requests,
     sleeps,
     clientKeys,
+    prompts: () => events.filter((event) => event.kind === "prompt").length,
     stdout: () => output("stdout"),
     stderr: () => output("stderr"),
   };
 }
 
 describe("help and usage", () => {
-  it.each([["--help"], ["-h"], []])(
-    "prints usage to stdout and exits 0 for %j",
-    async (...argv) => {
-      const cli = harness([]);
+  it.each([["--help"], ["-h"]])("prints usage to stdout and exits 0 for %s", async (flag) => {
+    const cli = harness([]);
 
-      await expect(run(argv, cli.deps)).resolves.toBe(0);
-      expect(cli.stdout()).toMatch(/^Usage: talentscout-cli \[--model <model>\]/);
-      expect(cli.stderr()).toBe("");
-      expect(cli.clientKeys).toEqual([]);
-    },
-  );
+    await expect(run([flag], cli.deps)).resolves.toBe(0);
+    expect(cli.stdout()).toMatch(/^Usage: talentscout-cli \[--model <model>\]/);
+    expect(cli.stderr()).toBe("");
+    expect(cli.clientKeys).toEqual([]);
+  });
 
   it("lists the models, marking temperature support, the aliases and the default", async () => {
     const cli = harness([]);
@@ -130,12 +99,58 @@ describe("help and usage", () => {
     expect(cli.stderr()).not.toContain("    at ");
   });
 
-  it("exits 1 when flags are given but no prompt", async () => {
+  it("exits 1 for a prompt argument that is empty", async () => {
     const cli = harness([]);
 
-    await expect(run(["--model", "claude-haiku-4-5"], cli.deps)).resolves.toBe(1);
-    expect(cli.stderr()).toContain("no prompt given");
+    await expect(run(["--model", "claude-haiku-4-5", "  "], cli.deps)).resolves.toBe(1);
+    expect(cli.stderr()).toContain("the prompt is empty");
     expect(cli.requests).toEqual([]);
+    expect(cli.prompts()).toBe(0);
+  });
+});
+
+describe("a prompt given as arguments", () => {
+  it("streams the reply to stdout while it is still arriving", async () => {
+    const live = new LiveReply();
+    const cli = harness([live]);
+
+    const exitCode = run(["--model", "claude-haiku-4-5", "Hello"], cli.deps);
+    live.send(messageStart(), textStart(), textDelta("Hel"));
+    await vi.waitFor(() => expect(cli.stdout()).toBe("Hel"));
+    live.send(...reply("lo").slice(2));
+    live.end();
+
+    await expect(exitCode).resolves.toBe(0);
+    expect(cli.stdout()).toBe("Hello\n");
+    expect(cli.prompts()).toBe(0);
+  });
+
+  it("exits 130 on Ctrl-C mid-reply, leaving no partial line behind", async () => {
+    const live = new LiveReply();
+    const cli = harness([live]);
+
+    const exitCode = run(["--model", "claude-haiku-4-5", "Tell me about the role"], cli.deps);
+    live.send(messageStart(), textStart(), textDelta("The role is"));
+    await vi.waitFor(() => expect(cli.stdout()).toBe("The role is"));
+    cli.interrupt.abort();
+
+    await expect(exitCode).resolves.toBe(EXIT_INTERRUPTED);
+    expect(cli.stdout()).toBe("The role is\n");
+  });
+
+  it("keeps what was printed when the reply breaks off, explains why, and exits 1", async () => {
+    const live = new LiveReply();
+    const cli = harness([live]);
+
+    const exitCode = run(["--model", "claude-haiku-4-5", "Hello"], cli.deps);
+    live.send(messageStart(), textStart(), textDelta("Ask about"));
+    await vi.waitFor(() => expect(cli.stdout()).toBe("Ask about"));
+    live.fail(streamError("overloaded_error", "Overloaded"));
+
+    await expect(exitCode).resolves.toBe(1);
+    expect(cli.stdout()).toBe("Ask about\n");
+    expect(cli.stderr()).toContain("stopped the reply with an error (overloaded_error)");
+    expect(cli.requests).toHaveLength(1);
   });
 });
 
@@ -311,7 +326,7 @@ describe("the API key", () => {
   it.each([{}, { ANTHROPIC_API_KEY: "" }, { ANTHROPIC_API_KEY: "   " }])(
     "is required: %j exits 1 without building a client",
     async (env) => {
-      const cli = harness([], env);
+      const cli = harness([], { env });
 
       await expect(run(["--model", "claude-haiku-4-5", "Hello"], cli.deps)).resolves.toBe(1);
       expect(cli.stderr()).toContain("ANTHROPIC_API_KEY is not set");
@@ -320,7 +335,7 @@ describe("the API key", () => {
   );
 
   it("does not mask a placeholder short enough to match ordinary words", async () => {
-    const cli = harness([reply("Hi")], { ANTHROPIC_API_KEY: "x" });
+    const cli = harness([reply("Hi")], { env: { ANTHROPIC_API_KEY: "x" } });
 
     await run(["--model", "claude-haiku-4-5", "Hello"], cli.deps);
 
@@ -362,5 +377,98 @@ describe("how the reply ended", () => {
     await expect(run(["--model", "claude-opus-5-5", "Hello"], cli.deps)).resolves.toBe(0);
     expect(cli.stdout()).toBe("A very long\n");
     expect(cli.stderr()).toContain("cut off at max_tokens=16000");
+  });
+});
+
+describe("a conversation, started by giving no prompt", () => {
+  it("sends each line with the turns before it and ends with exit 0 when input ends", async () => {
+    const cli = harness([reply("Ask about on-call."), reply("Ask how they handle incidents.")], {
+      lines: ["Suggest an interview question", "Another, on the same theme"],
+    });
+
+    await expect(run(["--model", "haiku"], cli.deps)).resolves.toBe(0);
+
+    expect(cli.requests.map((request) => request.model)).toEqual([
+      "claude-haiku-5-5",
+      "claude-haiku-5-5",
+    ]);
+    expect(cli.requests[1]?.messages).toEqual([
+      { role: "user", content: "Suggest an interview question" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Ask about on-call.", citations: null }],
+      },
+      { role: "user", content: "Another, on the same theme" },
+    ]);
+    expect(cli.stdout()).toBe("Ask about on-call.\nAsk how they handle incidents.\n");
+    expect(cli.events.filter((event) => event.kind === "prompt")).toEqual([
+      { kind: "prompt", text: PROMPT },
+      { kind: "prompt", text: PROMPT },
+      { kind: "prompt", text: PROMPT },
+    ]);
+  });
+
+  it("echoes the settings and checks the key before reading any input", async () => {
+    const missing = harness([], { env: {}, lines: ["Hello"] });
+    const present = harness([], { lines: [] });
+
+    await expect(run([], missing.deps)).resolves.toBe(1);
+    await expect(run([], present.deps)).resolves.toBe(0);
+
+    expect(missing.stderr()).toContain("ANTHROPIC_API_KEY is not set");
+    expect(missing.prompts()).toBe(0);
+    const echo = present.events.findIndex(
+      (event) => event.kind === "stderr" && event.text.includes("model=claude-sonnet-5-5"),
+    );
+    const prompt = present.events.findIndex((event) => event.kind === "prompt");
+    expect(echo).toBeGreaterThanOrEqual(0);
+    expect(echo).toBeLessThan(prompt);
+  });
+
+  it("sends nothing for a blank line", async () => {
+    const cli = harness([reply("Hi")], { lines: ["", "   ", "Hello"] });
+
+    await expect(run([], cli.deps)).resolves.toBe(0);
+
+    expect(cli.requests.map((request) => request.messages)).toEqual([
+      [{ role: "user", content: "Hello" }],
+    ]);
+  });
+
+  it("explains a failed turn, says it was left out, and carries on", async () => {
+    const cli = harness([apiError(400, "invalid_request_error", "bad"), reply("Hi")], {
+      lines: ["First", "Second"],
+    });
+
+    await expect(run([], cli.deps)).resolves.toBe(0);
+
+    expect(cli.stderr()).toContain("rejected the request (400): bad");
+    expect(cli.stderr()).toContain("left out of the conversation");
+    expect(cli.requests[1]?.messages).toEqual([{ role: "user", content: "Second" }]);
+  });
+
+  it("ends with exit 130 on Ctrl-C at the prompt", async () => {
+    const cli = harness([]);
+    cli.deps.readLine = async () => {
+      cli.interrupt.abort();
+      return undefined;
+    };
+
+    await expect(run([], cli.deps)).resolves.toBe(EXIT_INTERRUPTED);
+    expect(cli.requests).toEqual([]);
+  });
+
+  it("ends with exit 130 on Ctrl-C mid-reply, ending the line and reading nothing more", async () => {
+    const live = new LiveReply();
+    const cli = harness([live], { lines: ["Tell me about the role", "Never read"] });
+
+    const exitCode = run([], cli.deps);
+    live.send(messageStart(), textStart(), textDelta("The role is"));
+    await vi.waitFor(() => expect(cli.stdout()).toBe("The role is"));
+    cli.interrupt.abort();
+
+    await expect(exitCode).resolves.toBe(EXIT_INTERRUPTED);
+    expect(cli.stdout()).toBe("The role is\n");
+    expect(cli.prompts()).toBe(1);
   });
 });

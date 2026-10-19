@@ -47,6 +47,11 @@ export function describeFailure(error: unknown, modelId: string): string {
   if (error instanceof Anthropic.APIError && error.status !== undefined) {
     return `The Anthropic API returned an error (${error.status}): ${serverMessage(error)}`;
   }
+  // An `error` event inside a stream that had already started: the response
+  // status was a 200, so only the error's type says what went wrong.
+  if (error instanceof Anthropic.APIError && error.type !== null) {
+    return `The Anthropic API stopped the reply with an error (${error.type}): ${serverMessage(error)}`;
+  }
   return "An unexpected error occurred.";
 }
 

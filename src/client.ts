@@ -2,12 +2,21 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { ChatConfig } from "./config.js";
 
 /**
+ * A streamed reply: its events in the order the API sent them, and the
+ * message the SDK assembles from them. The SDK's `MessageStream` is one.
+ */
+export interface ReplyStream extends AsyncIterable<Anthropic.MessageStreamEvent> {
+  /** Resolves once the stream has ended, or rejects with why it failed. */
+  finalMessage(): Promise<Anthropic.Message>;
+}
+
+/**
  * The part of the SDK client the CLI calls. Kept this narrow so a test can
  * hand `run()` a fake without reproducing the whole SDK.
  */
 export interface MessagesClient {
   messages: {
-    create(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message>;
+    stream(params: Anthropic.MessageStreamParams, options: { signal: AbortSignal }): ReplyStream;
   };
 }
 
@@ -28,7 +37,7 @@ export function createAnthropicClient(apiKey: string): Anthropic {
 export function buildMessageParams(
   config: ChatConfig,
   messages: Anthropic.MessageParam[],
-): Anthropic.MessageCreateParamsNonStreaming {
+): Anthropic.MessageStreamParams {
   return {
     model: config.model.id,
     max_tokens: config.maxTokens,
@@ -37,12 +46,4 @@ export function buildMessageParams(
     // `buildConfig` only lets it through for a model that still accepts it.
     ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
   };
-}
-
-/** The reply's text blocks joined, skipping thinking and any other block type. */
-export function responseText(message: Anthropic.Message): string {
-  return message.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("");
 }

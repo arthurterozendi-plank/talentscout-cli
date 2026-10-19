@@ -72,6 +72,20 @@ describe("describeFailure", () => {
     );
   });
 
+  it("names the error type of a stream that failed after it started", () => {
+    const midStream = new Anthropic.APIError(
+      undefined,
+      { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+      undefined,
+      new Headers(),
+      "overloaded_error",
+    );
+
+    expect(describeFailure(midStream, MODEL)).toBe(
+      "The Anthropic API stopped the reply with an error (overloaded_error): Overloaded",
+    );
+  });
+
   it("never repeats the detail of an error it does not recognise", () => {
     const message = describeFailure(new Error("ENOENT /home/someone/.secrets"), MODEL);
 
