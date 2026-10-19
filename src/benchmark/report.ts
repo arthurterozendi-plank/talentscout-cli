@@ -180,8 +180,10 @@ export function renderReport(
 /**
  * The most a set of requests could cost: every reply running to
  * `max_tokens`, and every prompt costed at two characters per token, more
- * generous than any current tokenizer. The real cost is far lower; this is
- * the figure no run can exceed.
+ * generous than any current tokenizer. The real cost is far lower. Each
+ * request is counted once: a retry after a connection dropped once the reply
+ * was already generated may be billed again, so only such a retry can take a
+ * run past this figure.
  */
 export function costCeilingUsd(requests: readonly PlannedRequest[]): number {
   return requests.reduce((sum, { cell }) => {

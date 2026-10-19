@@ -126,9 +126,11 @@ The observable contract `run()` implements:
   cache-write TTL and output at their own rates — never estimated, so the benchmark and any later
   cost display cannot disagree. The prices are copied from Anthropic's pricing page with the date
   in `ModelInfo.pricing`'s JSDoc; `models.test.ts` checks every rate card against the published
-  cache multipliers, so a mistyped price fails `pnpm check`.
+  cache multipliers and the five-to-one output-to-input ratio every model had on that date, so a
+  mistyped price fails `pnpm check`.
 - **The benchmark is a package script beside the CLI, not a CLI flag.** Its grid is fixed in code
-  and it runs once per question, so it has no business in `cli.ts`'s contract. It reuses the CLI's
+  and it is run once to answer one question — which configuration to default to — so it has no
+  business in `cli.ts`'s contract. It reuses the CLI's
   request shape (`buildMessageParams`), temperature rule (`checkTemperatureSupport`), retries and
   error text, so a request it sends is one the CLI would send.
 - **The benchmark is a dry run unless `--live` is passed.** A plain `pnpm benchmark` never builds

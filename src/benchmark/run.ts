@@ -53,9 +53,9 @@ export interface RunOptions {
 
 /**
  * Every request of a run, repetition by repetition: each cell once, then each
- * cell again. A run stopped part-way still covers every cell, and the
- * repetitions of one cell are spread across the run instead of sent back to
- * back.
+ * cell again. Once the first repetition is done, a run stopped part-way still
+ * covers every cell, and the repetitions of one cell are spread across the run
+ * instead of sent back to back.
  */
 export function planRequests(cells: readonly BenchmarkCell[], reps: number): PlannedRequest[] {
   return Array.from({ length: reps }, (_, index) =>
@@ -126,12 +126,18 @@ export async function runRequest(
   }
 
   const text = responseText(message);
-  const score = message.stop_reason === "refusal" ? undefined : parseScore(text);
+  // A cut-off reply is never parsed: "<score>7" may be the start of 72.
+  const truncated =
+    message.stop_reason === "max_tokens" || message.stop_reason === "model_context_window_exceeded";
   let outcome: Outcome = "scored";
+  let score: number | undefined;
   if (message.stop_reason === "refusal") {
     outcome = "refusal";
-  } else if (score === undefined) {
-    outcome = message.stop_reason === "max_tokens" ? "truncated" : "malformed";
+  } else if (truncated) {
+    outcome = "truncated";
+  } else {
+    score = parseScore(text);
+    outcome = score === undefined ? "malformed" : "scored";
   }
   return {
     cell,

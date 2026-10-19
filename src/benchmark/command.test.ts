@@ -156,7 +156,7 @@ describe("runBenchmark", () => {
       expect(rows).toHaveLength(CELLS);
       expect(rows.every((row) => !row.includes("not run"))).toBe(true);
       expect(h.stderr()).toContain(`pass --live to send ${CELLS * 3} requests`);
-      expect(h.stderr()).toMatch(/A live run cannot cost more than \$\d+\.\d\d/);
+      expect(h.stderr()).toMatch(/a live run would cost \$\d+\.\d\d/);
     },
   );
 

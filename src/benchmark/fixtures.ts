@@ -32,15 +32,14 @@ const COMPLETE_RESUME = `Sam Okafor
 Backend Engineer · Lisbon, Portugal · sam.okafor@example.com
 
 Summary
-Backend engineer with six years of experience building data-heavy APIs, most recently in freight tracking.
+Backend engineer with eight years of experience building data-heavy APIs, most recently in payments.
 
 Experience
-Brightlane Freight — Backend Engineer, 2021–present
-- Built and run the shipment-status API (TypeScript, Node.js, PostgreSQL) used by 40 courier partners.
-- Moved carrier-event ingestion from nightly batches to Kafka consumers, cutting status lag from hours to under a minute.
-- Redesigned the shipments schema and indexes; p95 query time fell from 900 ms to 120 ms.
-- On the four-person on-call rotation; wrote the runbooks for the tracking services.
-- Mentored two junior engineers through their first year.
+Brightlane Payments — Backend Engineer, 2021–present
+- Built and run the payment-status API (TypeScript, Node.js, PostgreSQL) used by 40 merchant partners.
+- Moved card-event ingestion from nightly batches to Kafka consumers, cutting status lag from hours to under a minute.
+- Redesigned the payments schema, wrote its zero-downtime migrations and retuned its indexes; p95 query time fell from 900 ms to 120 ms.
+- On the four-person on-call rotation; wrote the runbooks for the payment services.
 
 Tallyhouse — Software Engineer, 2018–2021
 - Built invoicing features in Python (Django) on MySQL.
@@ -79,7 +78,9 @@ Nice to have:
 export const CASES: readonly BenchmarkCase[] = [
   {
     id: "baseline",
-    purpose: "A strong but imperfect match: every must-have is met, AWS is missing.",
+    purpose:
+      "A strong but imperfect match: every must-have is met with direct evidence, but only one " +
+      "nice-to-have (Kafka) is, which the rubric puts in its 70-89 band.",
     jobDescription: BACKEND_JOB,
     resume: COMPLETE_RESUME,
   },

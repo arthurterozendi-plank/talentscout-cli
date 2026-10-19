@@ -37,11 +37,16 @@ One fixed resume and job description, plus the two edge cases the ticket asks fo
 invented (`src/benchmark/fixtures.ts`). What the rubric implies a sensible score is, which the
 conclusion should check the results against:
 
-| Case               | Resume                                   | Job                     | Rubric implies                 |
-| ------------------ | ---------------------------------------- | ----------------------- | ------------------------------ |
-| `baseline`         | Backend engineer, six years, complete    | Senior Backend Engineer | 70–89: every must-have, no AWS |
-| `missing-sections` | The same candidate: name and skills only | Senior Backend Engineer | Clearly below `baseline`       |
-| `unrelated-job`    | The `baseline` resume                    | Pastry Chef             | 0–9: a different kind of work  |
+| Case               | Resume                                   | Job                     | Rubric implies                                    |
+| ------------------ | ---------------------------------------- | ----------------------- | ------------------------------------------------- |
+| `baseline`         | Backend engineer, eight years, complete  | Senior Backend Engineer | 70–89: every must-have, one of four nice-to-haves |
+| `missing-sections` | The same candidate: name and skills only | Senior Backend Engineer | Clearly below `baseline`                          |
+| `unrelated-job`    | The `baseline` resume                    | Pastry Chef             | 0–9: a different kind of work                     |
+
+The `baseline` resume gives direct evidence for every must-have, migrations included, but of the
+nice-to-haves shows only Kafka: its domain is payments, not logistics, its cloud is Google's, and
+it mentions no mentoring. That keeps it out of the rubric's 90–100 band, which asks for most
+nice-to-haves, so exactly one band applies.
 
 ### Models and temperature: two axes, not one grid
 
@@ -65,7 +70,8 @@ That makes **81 configurations**: 3 cases × 3 techniques × 9 model settings.
 ### Repetitions and what is measured
 
 Each configuration runs **3 times** by default (`--reps`, 2 to 10), one repetition of every cell
-before the next, so a run stopped part-way still covers every cell. The table lists every
+before the next, so once the first 81 requests are done a run stopped part-way still covers every
+cell. The table lists every
 repetition's score, then the mean and the spread (highest minus lowest): two configurations whose
 means differ by less than their spreads have not been shown to differ.
 
@@ -99,8 +105,9 @@ at each model's default.
 **243 requests** (81 configurations × 3 repetitions). Every run, dry or live, prints the ceiling
 below before it sends anything.
 
-- **Ceiling: $52.98.** What the run would cost if every reply ran to `max_tokens` with every prompt
-  costed at two characters per token. No run can cost more.
+- **Ceiling: $52.97.** What the run would cost if every reply ran to `max_tokens` with every prompt
+  costed at two characters per token. Only a retry billed a second time could take a run past it:
+  that happens when a connection drops after the reply was already generated.
 - **Expected: about $2.35, and under $4 if the models write much more.** Computed with the
   assumptions below; the heavier case doubles the current models' output to 3,000 tokens and raises
   a chain-of-thought analysis on the 4.x models from 600 to 1,000.
@@ -115,7 +122,7 @@ below before it sends anything.
 | `claude-opus-5-5`   |       27 |         $0.91 |
 | **Total**           |  **243** |     **$2.35** |
 
-Assumptions: input of 770 tokens zero-shot, 1,290 few-shot and 815 chain-of-thought (the prompts'
+Assumptions: input of 760 tokens zero-shot, 1,285 few-shot and 810 chain-of-thought (the prompts'
 length at four characters per token, plus 35% for the newer tokenizers); output of 5 tokens for a
 bare score and 600 for a chain-of-thought analysis on the 4.x models, and 1,500 tokens for every
 request to a current model, since their thinking is billed as output. How much the current models

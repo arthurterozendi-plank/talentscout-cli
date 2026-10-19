@@ -111,10 +111,19 @@ export function buildPrompt(
  * closed by `</score>` or cut off by {@link STOP_SEQUENCE}. Anything else —
  * no tag, a fraction, "72/100", a number out of range — counts as malformed
  * rather than being guessed at.
+ *
+ * A reply that opens an `<analysis>` must close it before the score. The stop
+ * sequence ends generation at the first `</score>`, even one written inside
+ * the analysis, and a score cut off there is not the model's answer.
  */
 export function parseScore(text: string): number | undefined {
   const open = text.lastIndexOf("<score>");
   if (open === -1) {
+    return undefined;
+  }
+  const analysisEnd = text.lastIndexOf("</analysis>");
+  const analysisClosedFirst = analysisEnd !== -1 && analysisEnd < open;
+  if (text.includes("<analysis>") && !analysisClosedFirst) {
     return undefined;
   }
   const rest = text.slice(open + "<score>".length);

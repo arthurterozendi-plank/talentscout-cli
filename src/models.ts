@@ -165,18 +165,21 @@ export type TokenUsage = Pick<
  * its own rate: uncached input, cache reads, 5-minute and 1-hour cache writes,
  * and output (which includes any thinking).
  *
- * Cache writes the API does not break down by TTL are priced at the 5-minute
- * rate, the default TTL. A model with a `longPrompt` rate card is priced on it
- * when the whole prompt — uncached, read and written tokens together — is
- * longer than its threshold. Only the standard tier is priced: batch, fast mode
- * and US-only inference are billed at other rates this does not model.
+ * Cache writes are taken from the TTL breakdown when the API gives one; a
+ * total without a breakdown is priced at the 5-minute rate, the default TTL.
+ * A model with a `longPrompt` rate card is priced on it when the whole prompt
+ * — uncached, read and written tokens together — is longer than its
+ * threshold. Only the standard tier is priced: batch, fast mode and US-only
+ * inference are billed at other rates this does not model.
  */
 export function costUsd(model: ModelInfo, usage: TokenUsage): number {
   const cacheRead = usage.cache_read_input_tokens ?? 0;
-  const cacheWrite = usage.cache_creation_input_tokens ?? 0;
-  const cacheWrite1h = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
-  const cacheWrite5m = cacheWrite - cacheWrite1h;
-  const promptTokens = usage.input_tokens + cacheRead + cacheWrite;
+  const breakdown = usage.cache_creation;
+  const cacheWrite5m = breakdown
+    ? breakdown.ephemeral_5m_input_tokens
+    : (usage.cache_creation_input_tokens ?? 0);
+  const cacheWrite1h = breakdown ? breakdown.ephemeral_1h_input_tokens : 0;
+  const promptTokens = usage.input_tokens + cacheRead + cacheWrite5m + cacheWrite1h;
 
   const { longPrompt } = model.pricing;
   const prices =

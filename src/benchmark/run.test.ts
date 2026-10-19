@@ -155,6 +155,17 @@ describe("runRequest", () => {
     expect((await runRequest({ cell: sonnet, rep: 1 }, opts)).outcome).toBe("truncated");
   });
 
+  it.each(["max_tokens", "model_context_window_exceeded"] as const)(
+    "never reads a score from a reply cut off by %s, whose last digit may be missing",
+    async (stopReason) => {
+      const { opts } = options([reply("<score>7", stopReason)]);
+
+      const record = await runRequest({ cell: sonnet, rep: 1 }, opts);
+
+      expect(record).toMatchObject({ outcome: "truncated", score: undefined });
+    },
+  );
+
   it("records a refusal as a refusal, not a score", async () => {
     const { opts } = options([reply("<score>50", "refusal")]);
 
