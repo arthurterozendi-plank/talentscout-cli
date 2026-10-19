@@ -1,4 +1,8 @@
 # pnpm writes this on every install; Prettier does not ignore it by default
 # (unlike node_modules, which it does), so `prettier --check .` fails on it
-# unless it is listed here. This is the file's only job in this repo.
+# unless it is listed here.
 pnpm-lock.yaml
+
+# Benchmark results are committed exactly as the run wrote them: they are the
+# evidence a conclusion cites, and reformatting would change it.
+benchmarks/*/results/

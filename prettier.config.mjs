@@ -8,7 +8,7 @@ const config = {
 
   plugins: ["@ianvs/prettier-plugin-sort-imports"],
 
-  importOrder: ["^node:", "<THIRD_PARTY_MODULES>", "^[./]"],
+  importOrder: ["^node:", "<THIRD_PARTY_MODULES>", "^@/", "^[./]"],
   importOrderParserPlugins: ["typescript"],
   importOrderTypeScriptVersion: "5.9.3",
 };
