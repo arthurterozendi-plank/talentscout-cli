@@ -13,11 +13,30 @@ pnpm install
 ## Run
 
 ```bash
-pnpm cli --help
+export ANTHROPIC_API_KEY=...   # read from the environment only; never put it in a file here
+pnpm cli --model claude-haiku-4-5 --temperature 0 "Suggest one interview question for a backend role"
 ```
 
-There are no subcommands yet: `--help`/`-h` and no arguments both print usage and exit `0`; an
-unrecognised flag prints usage on stderr and exits `1`.
+Each run sends one prompt and prints the reply. The reply goes to stdout; the settings the request
+is sent with, any retries, and errors go to stderr, so `pnpm -s cli ... > reply.txt` captures the
+reply alone.
+
+| Flag                  | Meaning                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| `--model <id>`        | Required. An exact model ID; `--help` lists the accepted ones.                       |
+| `--temperature <0-1>` | Optional. Omitted means the model's default.                                         |
+| `--max-retries <n>`   | Optional, default `4`, at most `10`. Retries after a 429, 5xx or dropped connection. |
+
+**Only `claude-opus-4-6`, `claude-sonnet-4-6` and `claude-haiku-4-5` accept `--temperature`.**
+Every model released after Claude Opus 4.6 answers any temperature but its default with a 400, so
+the CLI rejects the flag for those models before sending anything. An unknown model or an
+out-of-range temperature is rejected the same way.
+
+Retries back off exponentially from 0.5 s to 8 s with jitter, and wait at least as long as the
+API's `retry-after` header asks. When they run out, the CLI says what kept failing and exits `1`.
+
+`--help`/`-h`, or no arguments, prints usage and exits `0`. Any failure — a bad flag, a missing
+key, a rejected request, exhausted retries — is explained on stderr and exits `1`.
 
 ## Check
 

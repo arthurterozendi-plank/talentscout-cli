@@ -6,3 +6,6 @@ node_modules
 
 # misc
 .DS_Store
+
+# local files holding ANTHROPIC_API_KEY (.env, .envrc, ...)
+.env*
