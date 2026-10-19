@@ -215,10 +215,16 @@ The observable contract `run()` implements:
   sending back, while the spend record keeps every request the API started answering. Its `usage` is
   exactly what `streamTurn` collected — `message_start`'s counts, updated by any `message_delta` —
   and nothing missing is filled in, so a reply cut off before its final `message_delta` shows the
-  output counted so far, which can be less than what was generated. A request that failed before
-  `message_start` reported nothing and adds nothing. Each request is priced on its own before
-  anything is summed, because `costUsd` picks a rate card from one request's prompt length.
-  `/model` and `/system` leave the record alone, so a switch never loses or reprices earlier spend.
+  output counted so far, which can be less than what was generated; Anthropic does not document
+  what it bills for a reply cut off by an error event or by Ctrl-C, so this counts what was
+  reported. A request that failed before `message_start` reported nothing and adds nothing. A
+  refusal is the one request not priced on its usage alone: one that arrived before any output (no
+  content) is billed only in `BILLED_REFUSAL_CATEGORIES`, the dated list beside the prices, so in
+  any other category it is kept with `billed: false`, its reported tokens and $0 — listed, marked
+  `(refused, not billed)`, so every total in `/cost` is still the sum of its rows. Each request is
+  priced on its own before anything is summed, because `costUsd` picks a rate card from one
+  request's prompt length. `/model` and `/system` leave the record alone, so a switch never loses
+  or reprices earlier spend.
 - **Cost is shown on demand by `/cost`, never after each reply.** `/cost` lists every request, which
   is the per-turn view, then each model and the total. A line after every reply would repeat that
   on every turn and change what a prompt given as arguments prints, which has no way to ask for it.

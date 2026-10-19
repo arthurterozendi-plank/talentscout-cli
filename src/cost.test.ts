@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
-import { describeSpend, priceTurn, type RequestSpend } from "./cost.js";
+import { describeSpend, priceTurn, type RequestEnding, type RequestSpend } from "./cost.js";
 import { costUsd, findModel, type ModelInfo } from "./models.js";
 import type { TurnOutcome } from "./turn.js";
 
@@ -32,10 +32,46 @@ function usage(fields: Partial<Anthropic.Usage>): Anthropic.Usage {
 function spent(
   info: ModelInfo,
   fields: Partial<Anthropic.Usage>,
-  status: TurnOutcome["status"] = "complete",
+  ending: RequestEnding = "complete",
+  billed = true,
 ): RequestSpend {
   const reported = usage(fields);
-  return { model: info, status, usage: reported, costUsd: costUsd(info, reported) };
+  return {
+    model: info,
+    ending,
+    usage: reported,
+    billed,
+    costUsd: billed ? costUsd(info, reported) : 0,
+  };
+}
+
+/**
+ * A reply that completed as a refusal in `category`: before any output when
+ * `content` is empty, as the API sends one, or after some had streamed.
+ */
+function refusal(
+  category: Anthropic.RefusalStopDetails["category"],
+  content: Anthropic.ContentBlock[] = [],
+): Extract<TurnOutcome, { status: "complete" }> {
+  const reported = usage({ input_tokens: 400, output_tokens: content.length === 0 ? 0 : 60 });
+  return {
+    status: "complete",
+    model: opus.id,
+    usage: reported,
+    message: {
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      model: opus.id,
+      content,
+      container: null,
+      diagnostics: null,
+      stop_details: { type: "refusal", category, explanation: null },
+      stop_reason: "refusal",
+      stop_sequence: null,
+      usage: reported,
+    },
+  };
 }
 
 describe("priceTurn", () => {
@@ -61,12 +97,46 @@ describe("priceTurn", () => {
 
       expect(priceTurn(haiku, outcome)).toEqual({
         model: haiku,
-        status,
+        ending: status,
         usage: reported,
+        billed: true,
         costUsd: costUsd(haiku, reported),
       });
     },
   );
+
+  it.each(["bio", "frontier_llm", "reasoning_extraction"] as const)(
+    "prices a refusal before any output in %s, a category Anthropic bills",
+    (category) => {
+      const outcome = refusal(category);
+
+      expect(priceTurn(opus, outcome)).toMatchObject({ ending: "refused", billed: true });
+      expect(priceTurn(opus, outcome)?.costUsd).toBe(costUsd(opus, outcome.usage));
+      expect(priceTurn(opus, outcome)?.costUsd).toBeGreaterThan(0);
+    },
+  );
+
+  it.each(["cyber", "general_harms", null] as const)(
+    "prices a refusal before any output in category %s at nothing, as Anthropic does not bill it",
+    (category) => {
+      const outcome = refusal(category);
+
+      expect(priceTurn(opus, outcome)).toEqual({
+        model: opus,
+        ending: "refused",
+        usage: outcome.usage,
+        billed: false,
+        costUsd: 0,
+      });
+    },
+  );
+
+  it("prices a refusal that came after output had streamed, whatever its category", () => {
+    const outcome = refusal("cyber", [{ type: "text", text: "Here is how", citations: null }]);
+
+    expect(priceTurn(opus, outcome)).toMatchObject({ ending: "refused", billed: true });
+    expect(priceTurn(opus, outcome)?.costUsd).toBe(costUsd(opus, outcome.usage));
+  });
 });
 
 describe("describeSpend", () => {
@@ -96,6 +166,27 @@ describe("describeSpend", () => {
         "  claude-haiku-5-5         2  30,000      50,000            0   6,000  $0.00650",
         "  claude-opus-5-5          1   1,000           0            0     500  $0.01400",
         "  total                    3  31,000      50,000            0   6,500  $0.02050",
+      ].join("\n"),
+    );
+  });
+
+  it("marks refused requests, listing one Anthropic does not bill at $0 with the tokens it reported", () => {
+    const report = describeSpend([
+      spent(opus, { input_tokens: 400 }, "refused", false),
+      spent(opus, { input_tokens: 1_000, output_tokens: 500 }, "refused"),
+    ]);
+
+    expect(report).toBe(
+      [
+        "spend this session, priced from the usage each response reported:",
+        "Requests:",
+        "  model            input  cache read  cache write  output      cost",
+        "  claude-opus-5-5    400           0            0       0  $0.00000  (refused, not billed)",
+        "  claude-opus-5-5  1,000           0            0     500  $0.01400  (refused)",
+        "By model:",
+        "  model            requests  input  cache read  cache write  output      cost",
+        "  claude-opus-5-5         2  1,400           0            0     500  $0.01400",
+        "  total                   2  1,400           0            0     500  $0.01400",
       ].join("\n"),
     );
   });

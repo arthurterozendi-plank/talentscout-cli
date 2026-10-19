@@ -170,6 +170,18 @@ export type TokenUsage = Pick<
   | "cache_creation"
 >;
 
+/**
+ * The refusal categories Anthropic bills for a refusal that arrives before any
+ * output, as listed "as of September 2026" under "How refusals are billed" at
+ * https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#how-refusals-are-billed
+ * (read on 2026-10-19). A refusal before any output in any other category, or
+ * with a `null` one, is not billed, although its `usage` still reports tokens;
+ * a refusal after output has streamed is billed whatever its category. The
+ * page says the list may change, so it is data here, beside the prices.
+ */
+export const BILLED_REFUSAL_CATEGORIES: ReadonlySet<Anthropic.RefusalStopDetails["category"]> =
+  new Set(["bio", "frontier_llm", "reasoning_extraction"]);
+
 /** A response's token counts, one per rate they are billed at; see {@link TokenPrices}. */
 export type TokenCounts = { readonly [K in keyof TokenPrices]: number };
 

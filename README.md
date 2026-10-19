@@ -79,10 +79,18 @@ show as `<$0.00001`.
 
 **What `/cost` counts is what the API reported, however the request ended.** A request that failed
 before its reply started reported no usage and adds nothing. A reply that failed partway adds
-exactly the usage its stream had reported when it stopped, and is marked `(failed partway)`. The
-API sends its final output count only at the end of a reply, so for one that broke off the output
-shown can be less than what was generated — the CLI does not guess the difference. `/system` and
-`/model` never reset the record; nothing is kept once the CLI exits.
+exactly the usage its stream had reported when it stopped, and is marked `(failed partway)`.
+Anthropic's docs do not say what is billed for a reply cut off by an error or by Ctrl-C, so the CLI
+counts what was reported; and since the API sends its final output count only at the end of a
+reply, the output shown for one that broke off can be less than what was generated — the CLI does
+not guess the difference. A refusal is marked `(refused)` and counted like any reply, except that,
+following Anthropic's
+[billing rule for refusals](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#how-refusals-are-billed),
+one that arrives before any output is billed only in the categories `bio`, `frontier_llm` and
+`reasoning_extraction` (as of September 2026): a refusal before any output in any other category
+stays in the list with the tokens it reported, at $0, marked `(refused, not billed)`, so its tokens
+count in the totals and its dollars do not. `/system` and `/model` never reset the record; nothing
+is kept once the CLI exits.
 
 **Cost is shown when asked for, not after every reply.** `/cost` is the per-turn view: one row per
 request. A line after each reply would repeat that on every turn, and a prompt given as arguments —

@@ -1,5 +1,18 @@
-import { costUsd, countTokens, formatUsd, type ModelInfo, type TokenUsage } from "./models.js";
+import {
+  BILLED_REFUSAL_CATEGORIES,
+  costUsd,
+  countTokens,
+  formatUsd,
+  type ModelInfo,
+  type TokenUsage,
+} from "./models.js";
 import type { TurnOutcome } from "./turn.js";
+
+/**
+ * How a request ended: its turn's status, or `refused` for a reply that
+ * completed with `stop_reason: "refusal"`.
+ */
+export type RequestEnding = TurnOutcome["status"] | "refused";
 
 /**
  * One request that reported usage, priced at the rates of the model it was
@@ -8,10 +21,15 @@ import type { TurnOutcome } from "./turn.js";
  */
 export interface RequestSpend {
   readonly model: ModelInfo;
-  /** How the turn ended; only a `complete` turn's reply arrived in full. */
-  readonly status: TurnOutcome["status"];
+  readonly ending: RequestEnding;
   readonly usage: TokenUsage;
-  /** {@link costUsd} of `usage`, computed once when the request ended. */
+  /**
+   * Whether Anthropic bills the request. Only a refusal that arrived before
+   * any output, in a category outside {@link BILLED_REFUSAL_CATEGORIES}, is
+   * not billed.
+   */
+  readonly billed: boolean;
+  /** {@link costUsd} of `usage` when `billed`, and 0 when not. */
   readonly costUsd: number;
 }
 
@@ -19,17 +37,28 @@ export interface RequestSpend {
  * What the request `outcome` ended cost, or `undefined` when its stream never
  * started and so reported no usage: a request that failed before
  * `message_start` adds nothing. Any other outcome is priced on exactly the
- * usage the stream reported, never on an estimate of what it did not report.
+ * usage the stream reported, never on an estimate of what it did not report —
+ * except a refusal that arrived before any output, with no content, in a
+ * category Anthropic does not bill, which is kept at $0.
  */
 export function priceTurn(model: ModelInfo, outcome: TurnOutcome): RequestSpend | undefined {
   if (outcome.usage === undefined) {
     return undefined;
   }
+  let ending: RequestEnding = outcome.status;
+  let billed = true;
+  if (outcome.status === "complete" && outcome.message.stop_reason === "refusal") {
+    ending = "refused";
+    billed =
+      outcome.message.content.length > 0 ||
+      BILLED_REFUSAL_CATEGORIES.has(outcome.message.stop_details?.category ?? null);
+  }
   return {
     model,
-    status: outcome.status,
+    ending,
     usage: outcome.usage,
-    costUsd: costUsd(model, outcome.usage),
+    billed,
+    costUsd: billed ? costUsd(model, outcome.usage) : 0,
   };
 }
 
@@ -85,11 +114,18 @@ const amounts = (totals: Totals) => [
   formatUsd(totals.costUsd),
 ];
 
-const NOTES: Readonly<Record<TurnOutcome["status"], string>> = {
-  complete: "",
-  interrupted: "(interrupted)",
-  failed: "(failed partway)",
-};
+function note(request: RequestSpend): string {
+  switch (request.ending) {
+    case "complete":
+      return "";
+    case "refused":
+      return request.billed ? "(refused)" : "(refused, not billed)";
+    case "interrupted":
+      return "(interrupted)";
+    case "failed":
+      return "(failed partway)";
+  }
+}
 
 /** A header line and one line per row, indented, each column padded to its widest cell. */
 function table(columns: readonly Column[], rows: readonly (readonly string[])[]): string {
@@ -112,7 +148,9 @@ function table(columns: readonly Column[], rows: readonly (readonly string[])[])
 /**
  * The `/cost` report: every request that reported usage, in the order sent,
  * then the same tokens and dollars summed for each model, in the order the
- * models were first used, and for the whole session.
+ * models were first used, and for the whole session. A request that was not
+ * billed is still listed, with the tokens it reported and its $0, so every
+ * column of the totals is the sum of the rows above it.
  */
 export function describeSpend(spend: readonly RequestSpend[]): string {
   if (spend.length === 0) {
@@ -126,7 +164,7 @@ export function describeSpend(spend: readonly RequestSpend[]): string {
 
   const requests = table(
     [left("model"), ...AMOUNT_COLUMNS, left("")],
-    spend.map((request) => [request.model.id, ...amounts(sum([request])), NOTES[request.status]]),
+    spend.map((request) => [request.model.id, ...amounts(sum([request])), note(request)]),
   );
   const models = table(
     [left("model"), right("requests"), ...AMOUNT_COLUMNS],

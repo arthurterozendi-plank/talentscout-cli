@@ -558,6 +558,45 @@ describe("handleInput: /cost", () => {
     );
   });
 
+  it("lists a refusal before any output at $0 unless Anthropic bills its category", async () => {
+    /** A refusal as the API streams one that comes before any output: no content blocks. */
+    function refusedBeforeOutput(category: "bio" | "cyber"): ScriptedReply {
+      return [
+        messageStart({ input_tokens: 400, output_tokens: 0 }),
+        {
+          type: "message_delta",
+          delta: {
+            container: null,
+            stop_details: { type: "refusal", category, explanation: null },
+            stop_reason: "refusal",
+            stop_sequence: null,
+          },
+          usage: {
+            cache_creation_input_tokens: null,
+            cache_read_input_tokens: null,
+            input_tokens: null,
+            output_tokens: 0,
+            output_tokens_details: null,
+            server_tool_use: null,
+          },
+        },
+        messageStop,
+      ];
+    }
+    const chat = setup([refusedBeforeOutput("cyber"), refusedBeforeOutput("bio")]);
+    const session = createSession(opus);
+
+    await handleInput(session, "First", chat.io);
+    await handleInput(session, "Second", chat.io);
+    await handleInput(session, "/cost", chat.io);
+
+    // 400 input tokens at claude-opus-5-5's $4 per million.
+    expect(chat.notices.at(-1)).toContain(
+      "\n  claude-opus-5-5    400           0            0       0  $0.00000  (refused, not billed)\n" +
+        "  claude-opus-5-5    400           0            0       0  $0.00160  (refused)\n",
+    );
+  });
+
   it("keeps every request through /system and /model", async () => {
     const chat = setup([
       billed({ input_tokens: 1_000 }, 200),
