@@ -6,6 +6,7 @@ import {
   describeConfig,
   MAX_TOKENS,
 } from "./config.js";
+import { findModel } from "./models.js";
 
 function rejection(flags: Parameters<typeof buildConfig>[0]): string {
   const result = buildConfig(flags);
@@ -22,7 +23,7 @@ describe("buildConfig", () => {
     expect(result).toEqual({
       ok: true,
       config: {
-        model: { id: "claude-haiku-4-5", acceptsTemperature: true },
+        model: findModel("claude-haiku-4-5"),
         temperature: 0,
         maxTokens: MAX_TOKENS,
         maxRetries: DEFAULT_MAX_RETRIES,
@@ -100,8 +101,9 @@ describe("buildConfig", () => {
 });
 
 describe("checkTemperatureSupport", () => {
-  const accepting = { id: "claude-sonnet-4-6", acceptsTemperature: true };
-  const rejecting = { id: "claude-sonnet-5-5", acceptsTemperature: false };
+  const pricing = { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
+  const accepting = { id: "claude-sonnet-4-6", acceptsTemperature: true, pricing };
+  const rejecting = { id: "claude-sonnet-5-5", acceptsTemperature: false, pricing };
 
   it("allows any model when no temperature is set", () => {
     expect(checkTemperatureSupport(rejecting, undefined)).toBeUndefined();
