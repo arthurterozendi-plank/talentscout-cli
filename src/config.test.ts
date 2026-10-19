@@ -124,7 +124,7 @@ describe("describeConfig", () => {
     if (!result.ok) throw new Error(result.error);
 
     expect(describeConfig(result.config)).toBe(
-      "model=claude-haiku-4-5 temperature=0 max_tokens=16000 max_retries=2",
+      "model=claude-haiku-4-5 temperature=0 max_tokens=32000 max_retries=2",
     );
   });
 

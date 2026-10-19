@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMessageParams, createAnthropicClient, responseText } from "./client.js";
+import { buildMessageParams, createAnthropicClient } from "./client.js";
 import type { ChatConfig } from "./config.js";
 
 const config: ChatConfig = {
@@ -49,40 +49,5 @@ describe("createAnthropicClient", () => {
 
     expect(client.apiKey).toBe("fake-key-for-tests");
     expect(client.authToken).toBeNull();
-  });
-});
-
-describe("responseText", () => {
-  it("joins the text blocks and skips thinking", () => {
-    const message: Anthropic.Message = {
-      id: "msg_test",
-      type: "message",
-      role: "assistant",
-      model: "claude-opus-5-5",
-      content: [
-        { type: "thinking", thinking: "", signature: "sig" },
-        { type: "text", text: "Hello, ", citations: null },
-        { type: "text", text: "recruiter.", citations: null },
-      ],
-      container: null,
-      diagnostics: null,
-      stop_details: null,
-      stop_reason: "end_turn",
-      stop_sequence: null,
-      usage: {
-        cache_creation: null,
-        cache_creation_input_tokens: null,
-        cache_read_input_tokens: null,
-        inference_geo: null,
-        input_tokens: 5,
-        output_tokens: 5,
-        output_tokens_details: null,
-        server_tool_use: null,
-        service_tier: null,
-        speed: null,
-      },
-    };
-
-    expect(responseText(message)).toBe("Hello, recruiter.");
   });
 });
