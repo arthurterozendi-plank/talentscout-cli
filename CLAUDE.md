@@ -38,11 +38,12 @@ own `CLAUDE.md` — and a directory inside the monorepo sharing all three would 
 | ---------------- | ------------------------------------------------------------------------------------------------ |
 | `main.ts`        | The only CLI module touching `process`; wires the real deps — stdin, SIGINT — into `run()`.      |
 | `cli.ts`         | `run(argv, deps)`: flags, the order of checks, one prompt or a conversation, exit codes.         |
-| `session.ts`     | `Session` (config and history), `handleInput` — where every typed line goes — and `sendMessage`. |
+| `session.ts`     | `Session` (config, history, spend), `handleInput` — where every typed line goes — `sendMessage`. |
 | `commands.ts`    | The slash commands: `COMMANDS`, telling a command from a message, running one, the listing.      |
+| `cost.ts`        | `RequestSpend`, pricing how a turn ended with `priceTurn`, and the `/cost` report.               |
 | `turn.ts`        | `streamTurn`: one streamed request, its events handled one by one, and its `TurnOutcome`.        |
 | `line-input.ts`  | Typed lines and Ctrl-C through `node:readline`, from the streams `main.ts` passes in.            |
-| `models.ts`      | `MODELS`, which take a temperature and what each costs; `costUsd`; the aliases.                  |
+| `models.ts`      | `MODELS`, which take a temperature and what each costs; `costUsd` and its helpers; the aliases.  |
 | `config.ts`      | `buildConfig`, `checkTemperatureSupport`, and the startup echo.                                  |
 | `client.ts`      | SDK client construction, `ReplyStream`, and the one place a config becomes request params.       |
 | `retry.ts`       | `withRetry`: which errors are retried and how long to wait between attempts.                     |
@@ -118,8 +119,9 @@ The observable contract `run()` implements:
   that would reject the conversation's temperature, leaves the model as it was and says why.
   `/system <prompt>` replaces the system prompt for the turns after it, removes every thinking
   block from the history, and shows the old prompt and the new; `/system` alone shows the prompt,
-  or `none`. An unknown command, or a lone `/`, lists the commands. Commands answer on stderr. A
-  command is not a turn: it never joins the history and never affects the exit code.
+  or `none`. `/cost` shows the tokens and dollars every request so far has reported, then the same
+  per model and in total. An unknown command, or a lone `/`, lists the commands. Commands answer
+  on stderr. A command is not a turn: it never joins the history and never affects the exit code.
 - Ctrl-C, mid-reply or at the prompt: any partial line is ended, exit `130`.
 - Never a stack trace. `run()` turns every SDK error into a sentence (`errors.ts`); `main.ts`
   catches anything else with a generic message.
@@ -201,11 +203,25 @@ The observable contract `run()` implements:
   while still capping what a runaway reply can cost.
 - **Prices are data on each `ModelInfo`, and `costUsd` is the only place tokens become dollars.**
   A cost is always computed from a response's `usage` — uncached input, cache reads, each
-  cache-write TTL and output at their own rates — never estimated, so the benchmark and any later
-  cost display cannot disagree. The prices are copied from Anthropic's pricing page with the date
-  in `ModelInfo.pricing`'s JSDoc; `models.test.ts` checks every rate card against the published
-  cache multipliers and the five-to-one output-to-input ratio every model had on that date, so a
-  mistyped price fails `pnpm check`.
+  cache-write TTL and output at their own rates — never estimated, so the benchmark and `/cost`
+  cannot disagree. `countTokens` is the one reading of `usage` into those counts, so the token
+  columns `/cost` shows are the ones its dollars were computed from. The prices are copied from
+  Anthropic's pricing page with the date in `ModelInfo.pricing`'s JSDoc; `models.test.ts` checks
+  every rate card against the published cache multipliers and the five-to-one output-to-input
+  ratio every model had on that date, so a mistyped price fails `pnpm check`.
+- **Spend is recorded per request on `Session.spend`, and only `sendMessage` appends to it.** Every
+  request whose stream reported usage is kept with the model it went to and priced once, whether
+  its turn completed, failed partway or was interrupted: the history keeps only the exchanges worth
+  sending back, while the spend record keeps every request the API started answering. Its `usage` is
+  exactly what `streamTurn` collected — `message_start`'s counts, updated by any `message_delta` —
+  and nothing missing is filled in, so a reply cut off before its final `message_delta` shows the
+  output counted so far, which can be less than what was generated. A request that failed before
+  `message_start` reported nothing and adds nothing. Each request is priced on its own before
+  anything is summed, because `costUsd` picks a rate card from one request's prompt length.
+  `/model` and `/system` leave the record alone, so a switch never loses or reprices earlier spend.
+- **Cost is shown on demand by `/cost`, never after each reply.** `/cost` lists every request, which
+  is the per-turn view, then each model and the total. A line after every reply would repeat that
+  on every turn and change what a prompt given as arguments prints, which has no way to ask for it.
 - **The benchmark is a package script beside the CLI, not a CLI flag.** Its grid is fixed in code
   and it is run once to answer one question — which configuration to default to — so it has no
   business in `cli.ts`'s contract. It reuses the CLI's request shape (`buildMessageParams`),
