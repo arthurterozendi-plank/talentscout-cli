@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { parseCommand, runCommand } from "./commands.js";
 import type { ChatConfig } from "./config.js";
+import { priceTurn, type RequestSpend } from "./cost.js";
 import { streamTurn, type TurnIo, type TurnOutcome } from "./turn.js";
 
 /**
@@ -19,11 +20,18 @@ export interface Session {
    * which a new system prompt would otherwise make the API reject.
    */
   readonly history: Anthropic.MessageParam[];
+  /**
+   * Every request whose stream reported usage, oldest first, priced at the
+   * model it was sent to — the turns `history` leaves out included, each on
+   * whatever usage its stream reported before it stopped. Only
+   * {@link sendMessage} appends to it: `/model` and `/system` leave it alone.
+   */
+  readonly spend: RequestSpend[];
 }
 
 /** A conversation with no turns yet. */
 export function createSession(config: ChatConfig): Session {
-  return { config, history: [] };
+  return { config, history: [], spend: [] };
 }
 
 /**
@@ -39,7 +47,8 @@ export function isKept(outcome: TurnOutcome): boolean {
 /**
  * Sends `text` as the next user message, with the conversation so far, and
  * streams the reply. The exchange joins `session.history` only when
- * {@link isKept} says so.
+ * {@link isKept} says so; whatever usage the stream reported joins
+ * `session.spend` however the turn ended.
  */
 export async function sendMessage(
   session: Session,
@@ -47,7 +56,12 @@ export async function sendMessage(
   io: TurnIo,
 ): Promise<TurnOutcome> {
   const message: Anthropic.MessageParam = { role: "user", content: text };
-  const outcome = await streamTurn(session.config, [...session.history, message], io);
+  const { config } = session;
+  const outcome = await streamTurn(config, [...session.history, message], io);
+  const spent = priceTurn(config.model, outcome);
+  if (spent !== undefined) {
+    session.spend.push(spent);
+  }
   if (outcome.status === "complete" && isKept(outcome)) {
     session.history.push(message, { role: "assistant", content: outcome.message.content });
   }

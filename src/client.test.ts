@@ -4,7 +4,11 @@ import { buildMessageParams, createAnthropicClient } from "./client.js";
 import type { ChatConfig } from "./config.js";
 
 const config: ChatConfig = {
-  model: { id: "claude-haiku-4-5", acceptsTemperature: true },
+  model: {
+    id: "claude-haiku-4-5",
+    acceptsTemperature: true,
+    pricing: { input: 1, output: 5, cacheRead: 0.1, cacheWrite5m: 1.25, cacheWrite1h: 2 },
+  },
   temperature: undefined,
   system: undefined,
   maxTokens: 16_000,

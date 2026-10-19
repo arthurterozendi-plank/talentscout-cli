@@ -1,8 +1,9 @@
 # talentscout-cli
 
-The Day 6 CLI chatbot and Day 7 tool sandbox for **TalentScout**, the AI recruiting copilot built
-across the [ai-eng-training](../ai-eng-training) programme. This is its own repository, not a
-workspace of that monorepo — see `CLAUDE.md` for why and for this repo's conventions.
+The Day 6 CLI chatbot and prompting benchmark, and the Day 7 tool sandbox, for **TalentScout**,
+the AI recruiting copilot built across the [ai-eng-training](../ai-eng-training) programme. This
+is its own repository, not a workspace of that monorepo — see `CLAUDE.md` for why and for this
+repo's conventions.
 
 ## Install
 
@@ -43,6 +44,7 @@ stderr, beside the settings, and `--help` lists them too.
 | ---------------- | ---------------------------------------------------------------------------------------- |
 | `/model <name>`  | Sends the turns after it to another model — an ID or an alias — with the history so far. |
 | `/system <text>` | Replaces the system prompt for the turns after it. `/system` alone shows the prompt.     |
+| `/cost`          | Shows the tokens and dollars spent so far: request by request, per model, and in total.  |
 
 **`/model` changes the model without restarting, so the same question can be put to two models in
 one conversation.** The history goes to the new model as it is; nothing is stripped. Not every
@@ -65,6 +67,34 @@ Removing it once is the recovery those docs give. A reply that was nothing but r
 conversation together with the message it answered, and the confirmation says how many did.
 Setting the prompt already in effect changes nothing. This is the one time the CLI changes the
 history it keeps; everywhere else it only appends.
+
+**`/cost` shows what the conversation has cost so far, computed from the `usage` each response
+reported — never estimated.** It lists every request in the order it was sent, then the same
+tokens and dollars summed for each model, each at that model's own rate, and for the whole session,
+so a `/model` switch shows up as two models side by side. Input read from or written to the prompt
+cache has its own columns and its own rates, apart from uncached input, ready for the prompt caching
+that arrives on Day 10. Dollars are Anthropic's list prices for the standard tier, to five decimal
+places, so a short Claude Haiku 5.5 reply still shows a non-zero amount; amounts too small for that
+show as `<$0.00001`.
+
+**What `/cost` counts is what the API reported, however the request ended.** A request that failed
+before its reply started reported no usage and adds nothing. A reply that failed partway adds
+exactly the usage its stream had reported when it stopped, and is marked `(failed partway)`.
+Anthropic's docs do not say what is billed for a reply cut off by an error or by Ctrl-C, so the CLI
+counts what was reported; and since the API sends its final output count only at the end of a
+reply, the output shown for one that broke off can be less than what was generated — the CLI does
+not guess the difference. A refusal is marked `(refused)` and counted like any reply, except that,
+following Anthropic's
+[billing rule for refusals](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#how-refusals-are-billed),
+one that arrives before any output is billed only in the categories `bio`, `frontier_llm` and
+`reasoning_extraction` (as of September 2026): a refusal before any output in any other category
+stays in the list with the tokens it reported, at $0, marked `(refused, not billed)`, so its tokens
+count in the totals and its dollars do not. `/system` and `/model` never reset the record; nothing
+is kept once the CLI exits.
+
+**Cost is shown when asked for, not after every reply.** `/cost` is the per-turn view: one row per
+request. A line after each reply would repeat that on every turn, and a prompt given as arguments —
+which has no way to type `/cost` — prints nothing about cost, so its output stays exactly the reply.
 
 **An unknown command lists the commands instead of being sent.** So does a lone `/`. Nothing is
 added to the conversation, and a command — known or not — never makes the CLI exit `1`.
@@ -116,6 +146,30 @@ flag, a missing key, a rejected request, exhausted retries, a refusal — is exp
 exits `1`. A conversation explains a failed or refused turn and carries on; when input ends it
 exits `1` if any turn failed or was refused, and `0` only if every turn completed, so
 `cat prompts.txt | pnpm -s cli` can tell that some input got no usable answer.
+
+## Benchmark
+
+```bash
+pnpm benchmark          # dry run: no key, no spend; proves the pipeline, prints the cost ceiling
+pnpm benchmark --live   # the paid run: 243 requests; see the write-up for where results go
+```
+
+**Only `--live` sends requests.** A plain `pnpm benchmark` is a dry run against a fake client even
+when `ANTHROPIC_API_KEY` is set, because a key exported for other tools must not turn a plain run
+into spend.
+
+The resume-scoring benchmark (AI-52) runs one task the product needs — scoring a resume against a
+job description — with zero-shot, few-shot and chain-of-thought prompts on six models, each
+configuration three times, and produces one comparison table of every configuration's scores,
+latency and cost. `benchmarks/resume-scoring/README.md` is the write-up: the method, why
+temperature is compared on its own axis, what the live run will cost, and the pending conclusion.
+
+**It is a package script, not a CLI flag,** because it is a one-off experiment whose grid is fixed
+in code, and keeping it out of `cli.ts` leaves the chat CLI's contract as it is.
+
+**Prices live on each model in `src/models.ts`, and `costUsd` there is the only place tokens
+become dollars.** A request's cost is computed from its response's `usage`, never estimated, so
+the benchmark and `/cost` agree, and a price change is one edit.
 
 ## Check
 

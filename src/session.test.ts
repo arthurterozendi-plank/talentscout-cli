@@ -10,22 +10,30 @@ import {
   messageStart,
   messageStop,
   reply,
+  streamError,
   textDelta,
   textStart,
   thinkingBlock,
   type ScriptedReply,
 } from "./fake-client.js";
+import { findModel, type ModelInfo } from "./models.js";
 import { createSession, handleInput, sendMessage, type InputIo } from "./session.js";
 
+function model(id: string): ModelInfo {
+  const found = findModel(id);
+  if (found === undefined) throw new Error(`unknown model ${id}`);
+  return found;
+}
+
 const haiku: ChatConfig = {
-  model: { id: "claude-haiku-4-5", acceptsTemperature: true },
+  model: model("claude-haiku-4-5"),
   temperature: undefined,
   system: undefined,
   maxTokens: 16_000,
   maxRetries: 0,
 };
 
-const opus: ChatConfig = { ...haiku, model: { id: "claude-opus-5-5", acceptsTemperature: false } };
+const opus: ChatConfig = { ...haiku, model: model("claude-opus-5-5") };
 
 function setup(replies: ScriptedReply[]) {
   const fake = fakeClient(replies);
@@ -417,5 +425,203 @@ describe("handleInput: /system", () => {
     await handleInput(session, "Hello", chat.io);
 
     expect(chat.requests[0]).toMatchObject({ model: "claude-opus-5-5", system: "Be terse." });
+  });
+});
+
+describe("handleInput: /cost", () => {
+  /** A whole reply whose stream reports `usage` when it starts and `outputTokens` when it ends. */
+  function billed(usage: Parameters<typeof messageStart>[0], outputTokens: number): ScriptedReply {
+    return [
+      messageStart(usage),
+      textStart(),
+      textDelta("Fine."),
+      blockStop(),
+      messageDelta("end_turn", { output_tokens: outputTokens }),
+      messageStop,
+    ];
+  }
+
+  const NOTHING_SPENT = "nothing spent yet: no request in this session has reported usage.";
+
+  it("reports each request, then each model at its own rate, then the session total", async () => {
+    const chat = setup([
+      billed({ input_tokens: 1_000 }, 200),
+      billed({ input_tokens: 1_500 }, 300),
+      billed({ input_tokens: 2_000 }, 400),
+    ]);
+    const session = createSession(haiku);
+
+    await handleInput(session, "Suggest an interview question", chat.io);
+    await handleInput(session, "Another", chat.io);
+    await handleInput(session, "/model opus", chat.io);
+    await handleInput(session, "And one more", chat.io);
+    await handleInput(session, "/cost", chat.io);
+
+    expect(chat.notices.at(-1)).toBe(
+      [
+        "spend this session, priced from the usage each response reported:",
+        "Requests:",
+        "  model             input  cache read  cache write  output      cost",
+        "  claude-haiku-4-5  1,000           0            0     200  $0.00200",
+        "  claude-haiku-4-5  1,500           0            0     300  $0.00300",
+        "  claude-opus-5-5   2,000           0            0     400  $0.01600",
+        "By model:",
+        "  model             requests  input  cache read  cache write  output      cost",
+        "  claude-haiku-4-5         2  2,500           0            0     500  $0.00500",
+        "  claude-opus-5-5          1  2,000           0            0     400  $0.01600",
+        "  total                    3  4,500           0            0     900  $0.02100",
+      ].join("\n"),
+    );
+  });
+
+  it("counts cache reads and writes apart from input, each at its own rate", async () => {
+    const chat = setup([
+      billed(
+        {
+          input_tokens: 100,
+          cache_read_input_tokens: 10_000,
+          cache_creation_input_tokens: 2_000,
+          cache_creation: { ephemeral_5m_input_tokens: 1_000, ephemeral_1h_input_tokens: 1_000 },
+        },
+        200,
+      ),
+    ]);
+    const session = createSession(haiku);
+
+    await handleInput(session, "Summarise the job description", chat.io);
+    await handleInput(session, "/cost", chat.io);
+
+    // Per million tokens: 100 × $1 input, 10,000 × $0.10 read, 1,000 × $1.25
+    // and 1,000 × $2 written for 5 minutes and 1 hour, 200 × $5 output. Priced
+    // as plain input, the same tokens would come to $0.01310.
+    expect(chat.notices.at(-1)).toContain(
+      "\n  claude-haiku-4-5    100      10,000        2,000     200  $0.00535\n",
+    );
+  });
+
+  it.each([
+    ["was rejected", apiError(400, "invalid_request_error")],
+    ["found the API overloaded", apiError(529, "overloaded_error")],
+  ])("adds nothing for a request that %s before its reply started", async (_, error) => {
+    const chat = setup([error]);
+    const session = createSession(haiku);
+
+    await expect(handleInput(session, "Hello", chat.io)).resolves.toMatchObject({
+      status: "failed",
+      usage: undefined,
+    });
+    await handleInput(session, "/cost", chat.io);
+
+    expect(session.spend).toEqual([]);
+    expect(chat.notices).toEqual([NOTHING_SPENT]);
+  });
+
+  it("adds exactly the usage a reply reported before it failed partway", async () => {
+    const live = new LiveReply();
+    const chat = setup([live]);
+    const session = createSession(haiku);
+
+    const turn = handleInput(session, "Hello", chat.io);
+    live.send(
+      messageStart({ input_tokens: 3_000, output_tokens: 4 }),
+      textStart(),
+      textDelta("Ask"),
+    );
+    await vi.waitFor(() => expect(chat.written()).toBe("Ask"));
+    live.fail(streamError("overloaded_error"));
+    await expect(turn).resolves.toMatchObject({ status: "failed" });
+    await handleInput(session, "/cost", chat.io);
+
+    expect(chat.notices.at(-1)).toContain(
+      "\n  claude-haiku-4-5  3,000           0            0       4  $0.00302  (failed partway)\n",
+    );
+  });
+
+  it("adds exactly the usage a reply reported before Ctrl-C", async () => {
+    const live = new LiveReply();
+    const chat = setup([live]);
+    const session = createSession(haiku);
+
+    const turn = handleInput(session, "Hello", chat.io);
+    live.send(
+      messageStart({ input_tokens: 5_000, output_tokens: 2 }),
+      textStart(),
+      textDelta("Ask"),
+    );
+    await vi.waitFor(() => expect(chat.written()).toBe("Ask"));
+    chat.interrupt.abort();
+    await expect(turn).resolves.toMatchObject({ status: "interrupted" });
+    await handleInput(session, "/cost", chat.io);
+
+    expect(chat.notices.at(-1)).toContain(
+      "\n  claude-haiku-4-5  5,000           0            0       2  $0.00501  (interrupted)\n",
+    );
+  });
+
+  it("lists a refusal before any output at $0 unless Anthropic bills its category", async () => {
+    /** A refusal as the API streams one that comes before any output: no content blocks. */
+    function refusedBeforeOutput(category: "bio" | "cyber"): ScriptedReply {
+      return [
+        messageStart({ input_tokens: 400, output_tokens: 0 }),
+        {
+          type: "message_delta",
+          delta: {
+            container: null,
+            stop_details: { type: "refusal", category, explanation: null },
+            stop_reason: "refusal",
+            stop_sequence: null,
+          },
+          usage: {
+            cache_creation_input_tokens: null,
+            cache_read_input_tokens: null,
+            input_tokens: null,
+            output_tokens: 0,
+            output_tokens_details: null,
+            server_tool_use: null,
+          },
+        },
+        messageStop,
+      ];
+    }
+    const chat = setup([refusedBeforeOutput("cyber"), refusedBeforeOutput("bio")]);
+    const session = createSession(opus);
+
+    await handleInput(session, "First", chat.io);
+    await handleInput(session, "Second", chat.io);
+    await handleInput(session, "/cost", chat.io);
+
+    // 400 input tokens at claude-opus-5-5's $4 per million.
+    expect(chat.notices.at(-1)).toContain(
+      "\n  claude-opus-5-5    400           0            0       0  $0.00000  (refused, not billed)\n" +
+        "  claude-opus-5-5    400           0            0       0  $0.00160  (refused)\n",
+    );
+  });
+
+  it("keeps every request through /system and /model", async () => {
+    const chat = setup([
+      billed({ input_tokens: 1_000 }, 200),
+      billed({ input_tokens: 1_500 }, 300),
+    ]);
+    const session = createSession(haiku);
+    await handleInput(session, "First", chat.io);
+    await handleInput(session, "Second", chat.io);
+    const before = [...session.spend];
+
+    await handleInput(session, "/system Be terse.", chat.io);
+    await handleInput(session, "/model opus", chat.io);
+
+    expect(before).toHaveLength(2);
+    expect(session.spend).toEqual(before);
+  });
+
+  it("sends nothing and answers as a notice, not a reply", async () => {
+    const chat = setup([]);
+    const session = createSession(haiku);
+
+    await expect(handleInput(session, "/cost", chat.io)).resolves.toBeUndefined();
+
+    expect(chat.requests).toEqual([]);
+    expect(chat.written()).toBe("");
+    expect(chat.notices).toEqual([NOTHING_SPENT]);
   });
 });

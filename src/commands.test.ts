@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { describeCommands, parseCommand, runCommand, type Command } from "./commands.js";
 import type { ChatConfig } from "./config.js";
+import { findModel, type ModelInfo } from "./models.js";
 import { createSession } from "./session.js";
 
+function model(id: string): ModelInfo {
+  const found = findModel(id);
+  if (found === undefined) throw new Error(`unknown model ${id}`);
+  return found;
+}
+
 const config: ChatConfig = {
-  model: { id: "claude-haiku-4-5", acceptsTemperature: true },
+  model: model("claude-haiku-4-5"),
   temperature: undefined,
   system: undefined,
   maxTokens: 32_000,

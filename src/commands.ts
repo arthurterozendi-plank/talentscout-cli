@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { checkTemperatureSupport, describeConfig } from "./config.js";
+import { describeSpend } from "./cost.js";
 import { describeModelChoices, findModel, MODELS } from "./models.js";
 import type { Session } from "./session.js";
 
@@ -8,7 +9,7 @@ export interface CommandContext {
   /**
    * The conversation the command was typed in. A command may replace
    * `session.config`, which applies from the next request on; only `/system`
-   * also rewrites `session.history`.
+   * also rewrites `session.history`, and none changes `session.spend`.
    */
   readonly session: Session;
   /** Shows the command's answer beside the other notes about the run, never among the replies. */
@@ -158,8 +159,17 @@ const system: Command = {
   },
 };
 
+const cost: Command = {
+  name: "cost",
+  argument: "",
+  summary: "show tokens and dollars spent so far, by request and model",
+  run(_argument, { session, notice }) {
+    notice(describeSpend(session.spend));
+  },
+};
+
 /** Every command a conversation understands, in the order they are listed. */
-export const COMMANDS: readonly Command[] = [model, system];
+export const COMMANDS: readonly Command[] = [model, system, cost];
 
 /**
  * Splits `text` into a command name and argument if it is a command — any

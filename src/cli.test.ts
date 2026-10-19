@@ -500,6 +500,9 @@ describe("slash commands in a conversation", () => {
     await run(["--help"], cli.deps);
 
     expect(cli.stdout()).toMatch(/^ {2}\/model <name> +switch model, keeping the conversation/m);
+    expect(cli.stdout()).toMatch(
+      /^ {2}\/cost +show tokens and dollars spent so far, by request and model$/m,
+    );
   });
 
   it("sends the next message to the model /model names, with the earlier turns", async () => {
@@ -555,5 +558,31 @@ describe("slash commands in a conversation", () => {
     expect(cli.stderr()).toContain(
       'talentscout-cli: system prompt replaced. Was: none. Now: "Be terse.".',
     );
+  });
+
+  it("reports spend on stderr when /cost is typed, without sending it or changing the exit code", async () => {
+    const cli = harness([apiError(400, "invalid_request_error", "bad"), reply("Hi")], {
+      lines: ["/cost", "First", "Second", "/cost"],
+    });
+
+    await expect(run(["--model", "haiku"], cli.deps)).resolves.toBe(1);
+
+    expect(cli.requests).toHaveLength(2);
+    expect(cli.stdout()).toBe("Hi\n");
+    expect(cli.stderr()).toContain(
+      "talentscout-cli: nothing spent yet: no request in this session has reported usage.\n",
+    );
+    expect(cli.stderr()).toContain(
+      "talentscout-cli: spend this session, priced from the usage each response reported:\n",
+    );
+    expect(cli.stderr()).toMatch(/^ {2}total +1 +10 +0 +0 +5 +<\$0\.00001$/m);
+  });
+
+  it("exits 0 for a conversation of nothing but /cost", async () => {
+    const cli = harness([], { lines: ["/cost"] });
+
+    await expect(run([], cli.deps)).resolves.toBe(0);
+
+    expect(cli.requests).toEqual([]);
   });
 });
